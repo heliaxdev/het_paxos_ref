@@ -1,0 +1,61 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+package hetpaxosref;
+
+// Acceptors stream consensus messages to anyone who will listen (including learners)
+// Acceptors receive consensus messages from anyone who sends them (including proposers)
+service Acceptor {
+  // establish a 2-way connection.
+  // note that we can use just one of these between any pair of Acceptors:
+  //  whoever starts up second will establish the 2-way streaming RPC.
+  rpc StreamConsensusMessages (stream ConsensusMessage) returns (stream ConsensusMessage) {}
+}
+
+// While we could just use a `bytes` object, we know hashes will be exactly 256 bits.
+message Hash256 {
+  fixed64 bytes0Through7   = 1;
+  fixed64 bytes8Through15  = 2;
+  fixed64 bytes16Through23 = 3;
+  fixed64 bytes24Through31 = 4;
+}
+
+// In principle, ballots could be any totally ordered thing.
+// But here we're going to use pairs of timestamps and valueHashes
+// Note: since we're including a valueHash in the ballot, there's no
+//  need to transmit the value (hash) as well in a message: the Ballot
+//  will suffice.
+message Ballot {
+  google.protobuf.Timestamp timestamp = 1;
+  Hash256 valueHash = 2;
+}
+
+// A message which is just a set of some number of Hashes
+// We could just use `repeated Hash`, but the wrapper may prove nice sometimes.
+message HashSet {
+  repeated Hash256 hashes = 1;
+}
+
+// A sigature.
+// Unfortunately, with X.509, these can be of slightly variably length.
+// We could just use `bytes`, but the wrapper may prove nice sometimes.
+message Signature {
+  bytes bytes = 1;
+}
+
+// A HashSet paired with a signature: the sender attests that they have seen this HashSet.
+message SignedHashSet {
+  HashSet hashSet = 1;
+  Signature signature = 2;
+}
+
+// A Consensus Message.
+// This is either:
+// - a ballot (representing a proposal, already featuring a proposed
+//    value's Hash), or
+// a SignedHashSet (representing a 1b or 2a message)
+message ConsensusMessage {
+  oneof message_oneof {
+    Ballot ballot = 1;
+    SignedHashSet signedHashSet = 2;
+  }
+}
