@@ -1,10 +1,12 @@
 extern crate alloc;
 extern crate rcgen;
 extern crate rustls;
-use std::fmt;
 
+use crate::grpc::Signature;
+use prost::Message;
 use rustls::{ Certificate,  RootCertStore, server::{AllowAnyAuthenticatedClient},  SignatureScheme, sign::{any_ecdsa_type, Signer}, internal::{msgs::handshake::DigitallySignedStruct}};
 use rustls_pemfile::{certs, pkcs8_private_keys};
+use std::fmt;
 // apparently, ClientCertVerifier can't be imported for some reason?
 // as a result, we have to recalculate AllowAnyAuthenticatedClient every time.
 
@@ -71,10 +73,14 @@ impl PrivateKey {
     pub fn scheme(&self) -> SignatureScheme {
         self.signer.scheme()
     }
-    /// make a digital signature for this message
-    pub fn sign(&self, message : &[u8]) -> Vec<u8> {
+    /// make a digital signature for this array of bytes
+    pub fn sign_bytes(&self, message : &[u8]) -> Vec<u8> {
         self.signer.sign(message).expect(
             &format!("Problem signing {:?} with key {}", message, self.string))
+    }
+    /// make a grpc::Signature out of a grpc Message
+    pub fn sign_message(&self, message : &impl Message) -> Signature {
+        Signature{ bytes : self.sign_bytes(&message.encode_to_vec()[..]) } 
     }
 }
 
@@ -120,8 +126,12 @@ impl PublicKey {
     }
 
     /// Check that a digital signature was made with a private key corresponding to this public key
-    pub fn verify(&self, message : &[u8], signature : Vec<u8>) -> bool {
+    pub fn verify_bytes(&self, message : &[u8], signature : Vec<u8>) -> bool {
         (self.verify_closure)(&self, message, signature)
+    }
+    /// Check that a grpc::Signature was made with a private key corresponding to this public key
+    pub fn verify_signature(&self, message : &impl Message, signature : Signature) -> bool {
+        self.verify_bytes(&message.encode_to_vec()[..], signature.bytes)
     }
 }
 
