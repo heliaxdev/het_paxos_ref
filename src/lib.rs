@@ -1,3 +1,4 @@
+pub mod acceptor;
 pub mod crypto;
 
 pub mod grpc {
@@ -12,9 +13,11 @@ pub mod config {
 
 pub mod utils {
     use byteorder::{BigEndian, ByteOrder};
-    use crate::grpc::Hash256;
+    use crate::grpc::{Ballot, Hash256};
+    use pbjson_types::Timestamp;
     use prost:: Message;
     use sha3::{Digest, Sha3_256};
+    use std::{hash::{Hash, Hasher}, cmp::Ordering};
 
     /// Hash a protobuf Message struct with Sha3 into a Hash256 struct.
     /// Bytes marshaled in BigEndian order.
@@ -25,6 +28,47 @@ pub mod utils {
             bytes8_through15  : BigEndian::read_u64(&bytes[8..=15]),
             bytes16_through23 : BigEndian::read_u64(&bytes[16..=23]),
             bytes24_through31 : BigEndian::read_u64(&bytes[24..=31]),
+        }
+    }
+
+    /// Ironically, we want to make Hash256 objects hashable
+    impl Hash for Hash256 {
+        fn hash<H: Hasher>(&self, state : &mut H) {
+            self.bytes0_through7.hash(state);
+            self.bytes8_through15.hash(state);
+            self.bytes16_through23.hash(state);
+            self.bytes24_through31.hash(state);
+        }
+    }
+
+    impl Eq for Hash256 {}
+
+    /// We want to be able to compare hashes using < etc.
+    impl PartialOrd for Hash256 {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            (self.bytes0_through7,
+             self.bytes8_through15,
+             self.bytes16_through23,
+             self.bytes24_through31).partial_cmp(
+           &(other.bytes0_through7,
+             other.bytes8_through15,
+             other.bytes16_through23,
+             other.bytes24_through31))
+        }
+    }
+
+    /// We want to be able to compare ballots using < etc.
+    impl PartialOrd for Ballot {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            fn timestamp_tuple(timestamp : &Option<Timestamp>) -> (i64, i32) {
+                if let Some(t) = timestamp {
+                   (t.seconds, t.nanos)
+                } else {
+                   (0, 0)
+                }
+            }
+            (timestamp_tuple(&self.timestamp), &self.value_hash).partial_cmp(
+             &(timestamp_tuple(&other.timestamp), &other.value_hash))
         }
     }
 }
