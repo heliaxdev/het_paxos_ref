@@ -1,4 +1,3 @@
-
 use crate::{grpc::{acceptor_server,
                    Ballot,
                    ConsensusMessage,
@@ -118,6 +117,7 @@ impl acceptor_server::Acceptor for Arc<Acceptor> {
         });
         Ok(Response::new(UnboundedReceiverStream::new(self.add_out_channel())))
     }
-
     type StreamConsensusMessagesStream = UnboundedReceiverStream<Result<ConsensusMessage, Status>>;
 }
+
+//TODO: code to start up an acceptor

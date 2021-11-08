@@ -1,5 +1,6 @@
 pub mod acceptor;
 pub mod crypto;
+pub mod parse_config;
 
 pub mod grpc {
     tonic::include_proto!("hetpaxosref");

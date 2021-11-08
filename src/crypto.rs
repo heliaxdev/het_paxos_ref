@@ -6,7 +6,7 @@ use crate::grpc::Signature;
 use prost::Message;
 use rustls::{ Certificate,  RootCertStore, server::{AllowAnyAuthenticatedClient},  SignatureScheme, sign::{any_ecdsa_type, Signer}, internal::{msgs::handshake::DigitallySignedStruct}};
 use rustls_pemfile::{certs, pkcs8_private_keys};
-use std::fmt;
+use std::{hash::{Hash, Hasher}, fmt};
 // apparently, ClientCertVerifier can't be imported for some reason?
 // as a result, we have to recalculate AllowAnyAuthenticatedClient every time.
 
@@ -132,6 +132,12 @@ impl PublicKey {
     /// Check that a grpc::Signature was made with a private key corresponding to this public key
     pub fn verify_signature(&self, message : &impl Message, signature : Signature) -> bool {
         self.verify_bytes(&message.encode_to_vec()[..], signature.bytes)
+    }
+}
+
+impl Hash for PublicKey {
+    fn hash<H: Hasher>(&self, state : &mut H) {
+        self.string.hash(state)
     }
 }
 
