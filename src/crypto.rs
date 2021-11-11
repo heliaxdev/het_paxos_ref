@@ -6,7 +6,7 @@ use crate::grpc::Signature;
 use prost::Message;
 use rustls::{ Certificate,  RootCertStore, server::{AllowAnyAuthenticatedClient},  SignatureScheme, sign::{any_ecdsa_type, Signer}, internal::{msgs::handshake::DigitallySignedStruct}};
 use rustls_pemfile::{certs, pkcs8_private_keys};
-use std::{hash::{Hash, Hasher}, fmt};
+use std::{cmp::Ordering, hash::{Hash, Hasher}, fmt::{self, Debug, Error, Formatter}, sync::Arc};
 // apparently, ClientCertVerifier can't be imported for some reason?
 // as a result, we have to recalculate AllowAnyAuthenticatedClient every time.
 
@@ -27,13 +27,15 @@ impl fmt::Display for PrivateKey {
 
 /// Represents a corresponding public key (with a string in PEM form)
 /// Can be used to verify digital signatures
+#[derive(Clone)]
 pub struct PublicKey {
     string : String,
     certificate : Certificate,
     scheme : SignatureScheme,
-    verify_closure : Box<dyn Fn(&PublicKey, &[u8], Vec<u8>) -> bool>,
-
+    // we could use a Box instead of an Arc, but then it wouldn't clone nicely.
+    verify_closure : Arc<dyn Fn(&PublicKey, &[u8], Vec<u8>) -> bool>,
 }
+
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.string)
@@ -99,7 +101,7 @@ impl PublicKey {
             certificate,
             string : pem_string,
             scheme,
-            verify_closure : Box::new(verify_closure),
+            verify_closure : Arc::new(verify_closure),
         }
     }
 
@@ -138,6 +140,33 @@ impl PublicKey {
 impl Hash for PublicKey {
     fn hash<H: Hasher>(&self, state : &mut H) {
         self.string.hash(state)
+    }
+}
+
+impl PartialEq for PublicKey {
+    fn eq(&self, other : &Self) -> bool {
+        self.string == other.string
+    }
+}
+
+impl Eq for PublicKey {}
+
+
+impl Ord for PublicKey {
+    fn cmp(&self, other : &Self) -> Ordering {
+        self.string.cmp(&other.string)
+    }
+}
+
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other : &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Debug for PublicKey {
+    fn fmt(&self, f : &mut Formatter<'_>) -> Result<(), Error> {
+        self.string.fmt(f)
     }
 }
 
