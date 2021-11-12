@@ -33,7 +33,7 @@ pub struct PublicKey {
     certificate : Certificate,
     scheme : SignatureScheme,
     // we could use a Box instead of an Arc, but then it wouldn't clone nicely.
-    verify_closure : Arc<dyn Fn(&PublicKey, &[u8], Vec<u8>) -> bool>,
+    verify_closure : Arc<dyn Fn(&PublicKey, &[u8], Vec<u8>) -> bool + Send + Sync>,
 }
 
 impl fmt::Display for PublicKey {
