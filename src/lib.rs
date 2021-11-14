@@ -5,6 +5,18 @@ pub mod parse_config;
 pub mod grpc {
     tonic::include_proto!("hetpaxosref");
     include!(concat!(env!("OUT_DIR"), "/hetpaxosref.serde.rs"));
+
+    impl ConsensusMessage {
+        /// quick check to see if this is a one_a message: does it have a ballot with a timestamp
+        /// and hash_value?
+        pub fn is_one_a(&self) -> bool {
+            match self {
+                ConsensusMessage{message_oneof : Some(consensus_message::MessageOneof::Ballot(
+                        Ballot{timestamp : Some(_), value_hash : Some(_)}))} => true,
+                _ => false,
+            }
+        }
+    }
 }
 
 pub mod config {
@@ -45,12 +57,12 @@ pub mod utils {
     impl Eq for Hash256 {}
 
     /// We want to be able to compare hashes using < etc.
-    impl PartialOrd for Hash256 {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    impl Ord for Hash256 {
+        fn cmp(&self, other: &Self) -> Ordering {
             (self.bytes0_through7,
              self.bytes8_through15,
              self.bytes16_through23,
-             self.bytes24_through31).partial_cmp(
+             self.bytes24_through31).cmp(
            &(other.bytes0_through7,
              other.bytes8_through15,
              other.bytes16_through23,
@@ -58,9 +70,17 @@ pub mod utils {
         }
     }
 
-    /// We want to be able to compare ballots using < etc.
-    impl PartialOrd for Ballot {
+    impl PartialOrd for Hash256 {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl Eq for Ballot {}
+
+    /// We want to be able to compare ballots using < etc.
+    impl Ord for Ballot {
+        fn cmp(&self, other: &Self) -> Ordering {
             fn timestamp_tuple(timestamp : &Option<Timestamp>) -> (i64, i32) {
                 if let Some(t) = timestamp {
                    (t.seconds, t.nanos)
@@ -68,8 +88,14 @@ pub mod utils {
                    (0, 0)
                 }
             }
-            (timestamp_tuple(&self.timestamp), &self.value_hash).partial_cmp(
+            (timestamp_tuple(&self.timestamp), &self.value_hash).cmp(
              &(timestamp_tuple(&other.timestamp), &other.value_hash))
+        }
+    }
+
+    impl PartialOrd for Ballot {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 }
