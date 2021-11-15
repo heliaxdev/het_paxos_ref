@@ -53,6 +53,15 @@ impl AcceptorState {
         self.known_messages.get(message).is_some()
     }
 
+    fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
+       if let Some(MessageOneof::SignedHashSet(SignedHashSet{hash_set : Some(hashset),..})) =
+               &message.message_oneof {
+           hashset.hashes.iter().all(|message_hash| self.hash_received(message_hash))
+       } else {
+           true
+       }
+    }
+
 
     /// (Hashes of) all the messages transitively referenced by (the message with the hash of)
     /// reference.
@@ -61,17 +70,13 @@ impl AcceptorState {
                                              mut so_far : HashSet<&'a Hash256>,
                                              reference : &'a Hash256)
                                             -> HashSet<&'a Hash256> {
-            if so_far.contains(reference) {
-                so_far
-            } else {
-                so_far.insert(reference);
+            if so_far.insert(reference) {
                 if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
                              SignedHashSet{hash_set : Some(refs),..}))}) = s.known_messages.get(reference) {
-                    refs.hashes.iter().fold(so_far, |w,r| transitive_references_so_far(s,w,r))
-                } else {
-                    so_far
+                    return refs.hashes.iter().fold(so_far, |w,r| transitive_references_so_far(s,w,r));
                 }
             }
+            so_far
         }
         transitive_references_so_far(self, HashSet::new(), reference)
     }
@@ -83,14 +88,18 @@ impl AcceptorState {
         hashes.into_iter().filter_map(|r| self.known_messages.get(r)).collect()
     }
 
+    fn signed_by(&self, address : &ParsedAddress, reference : &Hash256) -> bool {
+        if let Some(message) = self.known_messages.get(reference) {
+            return address.signed(message);
+        }
+        false
+    }
+
     /// Who (if anyone) has (correctly) signed this message?
-    fn signer<'a>(&'a self, message : &ConsensusMessage) -> Option<&'a ParsedAddress> {
-        if let ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
-                             SignedHashSet{hash_set : Some(hs), signature : Some(signature)}))} = message {
-            for address in &self.config.known_addresses {
-                if address.public_key.verify_signature(hs, signature.clone()) {
-                    return Some(&address)
-                }
+    fn signer<'a>(&'a self, reference : &Hash256) -> Option<&'a ParsedAddress> {
+        for address in &self.config.known_addresses {
+            if self.signed_by(address, reference) {
+                return Some(&address);
             }
         }
         None
@@ -100,17 +109,13 @@ impl AcceptorState {
         self.transitive_references(reference).iter().combinations(2).filter_map(|pair| {
             let reference_x = pair.get(0)?;
             let reference_y = pair.get(1)?;
-            let message_x = self.known_messages.get(reference_x)?;
-            let message_y = self.known_messages.get(reference_y)?;
-            let signer_x = self.signer(message_x)?;
-            let signer_y = self.signer(message_y)?;
-            if   signer_x == signer_y
+            let signer = self.signer(reference_x)?;
+            if   self.signed_by(signer, reference_y)
               && !self.transitive_references(reference_x).iter().contains(reference_y)
               && !self.transitive_references(reference_y).iter().contains(reference_x) {
-                Some(signer_x)
-            } else {
-                None
+                return Some(signer);
             }
+            None
         }).collect()
     }
 
@@ -137,7 +142,7 @@ impl AcceptorState {
 
     fn connected<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a ParsedAddress> {
         let caught_acceptors = self.caught(reference);
-        self.config.known_addresses.iter().filter(|x| self.connected_learners(learner, x, &caught_acceptors)).collect()
+        self.config.learners.keys().filter(|x| self.connected_learners(learner, x, &caught_acceptors)).collect()
     }
 
     fn buried(&self, learner : &ParsedAddress, reference : &Hash256, later_reference : &Hash256) -> bool {
@@ -155,9 +160,20 @@ impl AcceptorState {
         false
     }
 
+    fn connected_two_as<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a Hash256> {
+        if let Some(sig) = self.signer(reference) {
+            return self.transitive_references(reference).into_iter().filter(|m|
+                       self.connected(learner, reference).into_iter().any(|lrn|
+                              self.signed_by(sig, m)
+                           && self.is_two_a_with_learner(lrn, m)
+                           && !self.buried(lrn, m, reference))).collect();
+        }
+        HashSet::new()
+    }
+
     fn signers<'a, 'b, T>(&'a self, references : T) -> HashSet<&'a ParsedAddress> 
             where T : IntoIterator<Item = &'b Hash256> {
-        self.into_messages(references).iter().filter_map(|m| self.signer(m)).collect()
+        references.into_iter().filter_map(|m| self.signer(m)).collect()
     }
 
     fn is_one_a(&self, reference : &Hash256) -> bool {
@@ -168,46 +184,42 @@ impl AcceptorState {
     }
 
     fn is_one_b(&self, reference : &Hash256) -> bool {
-        if let Some(message) = self.known_messages.get(reference) {
-            if let ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
-                     SignedHashSet{hash_set : Some(refs),..}))} = message {
-                if let Some(one_a) = self.get_one_a(reference) {
-                    // A OneB message is a direct response to a OneA
-                    if refs.hashes.iter().contains(&hash(one_a)) {
-                        return self.signer(message).is_some();
-                    }
+        if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
+                       SignedHashSet{hash_set : Some(refs),..}))}) = self.known_messages.get(reference) {
+            if let Some(one_a) = self.get_one_a(reference) {
+                // A OneB message is a direct response to a OneA
+                if refs.hashes.iter().contains(one_a) {
+                    return self.signer(reference).is_some();
                 }
             }
         }
         false
     }
 
-    fn get_one_a<'a>(&'a self, reference : &'a Hash256) -> Option<&'a ConsensusMessage> {
-        self.into_messages(self.transitive_references(reference)).into_iter()
-            .filter(|m| m.is_one_a())
-            .max_by_key(|m| match m {
-                ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))} => Some(b),
+    fn get_one_a<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Hash256> {
+        self.transitive_references(reference).into_iter()
+            .filter(|m| self.is_one_a(m))
+            .max_by_key(|m| match self.known_messages.get(m) {
+                Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) => Some(b),
                 _ => None // since they're all one_as, this should never happen
             })
     }
 
     fn ballot<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Ballot> {
-        match self.get_one_a(reference) {
-            Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) => Some(&b),
-            _ => None
+        if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) =
+                self.known_messages.get(self.get_one_a(reference)?) {
+            return Some(&b);
         }
+        None
     }
 
     fn value<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Hash256> {
-        match self.ballot(reference) {
-            Some(Ballot{value_hash : Some(h),..}) => Some(&h),
-            _ => None
-        }
+        self.ballot(reference)?.value_hash.as_ref()
     }
 
     fn fresh(&self, learner : &ParsedAddress, reference : &Hash256) -> bool {
-        // TODO: actually write this
-        true
+        let v = self.value(reference);
+        self.connected_two_as(learner, reference).into_iter().all(|m| self.value(m) == v)
     }
 
     fn quorum<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a Hash256> {
@@ -221,12 +233,10 @@ impl AcceptorState {
 
     fn is_two_a_with_learner(& self, learner : &ParsedAddress, reference : &Hash256) -> bool {
         if !self.is_one_b(reference) {
-            if let Some(message) = self.known_messages.get(reference) {
-                if let Some(sig) = self.signer(message) {
-                    if let Some(quorums) = self.config.learners.get(learner) {
-                        let q = self.signers(self.quorum(learner, reference));
-                        return q.contains(sig) && quorums.iter().any(|qi| qi.iter().all(|a| q.contains(a)));
-                    }
+            if let Some(sig) = self.signer(reference) {
+                if let Some(quorums) = self.config.learners.get(learner) {
+                    let q = self.signers(self.quorum(learner, reference));
+                    return q.contains(sig) && quorums.iter().any(|qi| qi.iter().all(|a| q.contains(a)));
                 }
             }
         }
@@ -242,14 +252,6 @@ impl AcceptorState {
     }
 
 
-    fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
-       if let Some(MessageOneof::SignedHashSet(SignedHashSet{hash_set : Some(hashset),..})) =
-               &message.message_oneof {
-           hashset.hashes.iter().all(|message_hash| self.hash_received(message_hash))
-       } else {
-           true
-       }
-    }
 }
 
 struct AcceptorMutex {

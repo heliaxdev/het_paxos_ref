@@ -1,5 +1,8 @@
 use crate::{config::{Address, Config},
             crypto::{PublicKey, PrivateKey},
+            grpc::{ConsensusMessage,
+                   consensus_message::MessageOneof,
+                   SignedHashSet},
            };
 use serde_json;
 use std::collections::{HashMap, HashSet};
@@ -15,6 +18,16 @@ pub struct ParsedAddress {
     pub hostname : String,
     pub port : u32,
     pub public_key : PublicKey,
+}
+
+impl ParsedAddress {
+    pub fn signed(&self, message : &ConsensusMessage) -> bool {
+        if let ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
+                             SignedHashSet{hash_set : Some(hs), signature : Some(signature)}))} = message {
+            return self.public_key.verify_signature(hs, signature.clone());
+        }
+        false
+    }
 }
 
 pub struct ParsedConfig {
