@@ -94,10 +94,11 @@ pub fn caught<'a, 'b>(config : &'a ParsedConfig,
     }).collect()
 }
 
-fn connected_learners(config : &ParsedConfig,
-                      learner_x : &ParsedAddress,
-                      learner_y : &ParsedAddress,
-                      caught : &HashSet<&ParsedAddress>) -> bool {
+pub fn connected_learners(config : &ParsedConfig,
+                          learner_x : &ParsedAddress,
+                          learner_y : &ParsedAddress,
+                          caught : &HashSet<&ParsedAddress>)
+                          -> bool {
     // does this pair of learners have an uncaught acceptor in each of their quorum
     // intersections?
     if let (Some(quorums_x), Some(quorums_y)) =
