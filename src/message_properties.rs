@@ -248,7 +248,18 @@ pub fn is_two_a_with_learner<'b>(config : &ParsedConfig,
         if let Some(sig) = signer(config, known_messages, reference) {
             if let Some(quorums) = config.learners.get(learner) {
                 let q = signers(config, known_messages, quorum(config, known_messages, learner, reference));
-                return q.contains(sig) && quorums.iter().any(|qi| qi.iter().all(|a| q.contains(a)));
+                let b = ballot(known_messages, reference);
+                return    q.contains(sig) // we signed a 1b in q
+                       // and there is a quorum for this learner of which q is a superset.
+                       && quorums.iter().any(|qi| qi.iter().all(|a| q.contains(a)))
+                       // and there are no messages (other than this one) in this messages'
+                       // transitive references that are already 2As with this signer, ballot,
+                       // and learner.
+                       && transitive_references(known_messages, reference).into_iter().all(|r|
+                              r == reference
+                           || !signed_by(known_messages, sig, r)
+                           || ballot(known_messages, r) != b
+                           || !is_two_a_with_learner(config, known_messages, learner, r));
             }
         }
     }
