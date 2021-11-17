@@ -1,37 +1,22 @@
-use crate::{grpc::{acceptor_client::AcceptorClient,
-                   acceptor_server::{self, AcceptorServer},
-                   Ballot,
+use crate::{grpc::{Ballot,
                    ConsensusMessage,
                    consensus_message::MessageOneof,
                    Hash256,
                    SignedHashSet},
             parse_config::{ParsedAddress,
-                           ParsedConfig,},
-            utils::hash};
+                           ParsedConfig}};
 use itertools::Itertools;
-use futures_core::{stream::Stream, task::{Context, Poll}};
-use futures_util::StreamExt;
-use std::{borrow::{Borrow, BorrowMut},
-          collections::{HashMap, HashSet},
-          iter::once,
-          pin::Pin,
-          slice::Iter,
-          sync::{Arc, Condvar, Mutex},
-          thread::sleep,
-          time::{Duration, SystemTime, UNIX_EPOCH}};
-use tokio::{self, sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver}};
-use tokio_stream::wrappers::UnboundedReceiverStream;
-use tonic::{Request, Response, Status, Streaming, transport::Server};
+use std::collections:: HashSet;
 
 
 
 
 /// (Hashes of) all the messages transitively referenced by (the message with the hash of)
 /// reference.
-pub fn transitive_references<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>),
+pub fn transitive_references<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
                                  reference : &'a Hash256)
                                  -> HashSet<&'a Hash256> {
-    fn transitive_references_so_far<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>),
+    fn transitive_references_so_far<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
                                          mut so_far : HashSet<&'a Hash256>,
                                          reference : &'a Hash256)
                                         -> HashSet<&'a Hash256> {
@@ -45,16 +30,16 @@ pub fn transitive_references<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'
     }
     transitive_references_so_far(known_messages, HashSet::new(), reference)
 }
+
 /// Convert any collection of &Hash256 s into a Vec of ConsensusMessage s
-/// (with lifetime of self)
-pub fn into_messages<'a, 'b, T>(known_messages : &(fn(&Hash256) -> Option<&'a ConsensusMessage>),
+pub fn into_messages<'a, 'b, T>(known_messages : &impl Fn(&Hash256) -> Option<&'a ConsensusMessage>,
                                 hashes : T)
                                 -> Vec<&'a ConsensusMessage> 
         where T : IntoIterator<Item = &'b Hash256> {
     hashes.into_iter().filter_map(|r| known_messages(r)).collect()
 }
 
-pub fn signed_by<'b, 'd>(known_messages : &(fn(&'d Hash256) -> Option<&'b ConsensusMessage>),
+pub fn signed_by<'b, 'd>(known_messages : &impl Fn(&'d Hash256) -> Option<&'b ConsensusMessage>,
                          address : &ParsedAddress,
                          reference : &'d Hash256)
                          -> bool {
@@ -66,7 +51,7 @@ pub fn signed_by<'b, 'd>(known_messages : &(fn(&'d Hash256) -> Option<&'b Consen
 
 /// Who (if anyone) has (correctly) signed this message?
 pub fn signer<'a, 'b, 'd>(config : &'a ParsedConfig,
-                          known_messages : &(fn(&'d Hash256) -> Option<&'b ConsensusMessage>),
+                          known_messages : &impl Fn(&'d Hash256) -> Option<&'b ConsensusMessage>,
                           reference : &'d Hash256)
                           -> Option<&'a ParsedAddress> {
     for address in &config.known_addresses {
@@ -78,7 +63,7 @@ pub fn signer<'a, 'b, 'd>(config : &'a ParsedConfig,
 }
 
 pub fn caught<'a, 'b>(config : &'a ParsedConfig,
-                      known_messages : &(fn(&'b Hash256) -> Option<&'b ConsensusMessage>),
+                      known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
                       reference : &'b Hash256)
                       -> HashSet<&'a ParsedAddress> {
     transitive_references(known_messages, reference).iter().combinations(2).filter_map(|pair| {
@@ -117,7 +102,7 @@ pub fn connected_learners(config : &ParsedConfig,
 
 
 pub fn connected<'a, 'b>(config : &'a ParsedConfig,
-                         known_messages : &(fn(&'b Hash256) -> Option<&'b ConsensusMessage>),
+                         known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
                          learner : &ParsedAddress,
                          reference : &'b Hash256)
                          -> HashSet<&'a ParsedAddress> {
@@ -126,7 +111,7 @@ pub fn connected<'a, 'b>(config : &'a ParsedConfig,
 }
 
 pub fn buried<'b>(config : &ParsedConfig,
-                  known_messages : &(fn(&'b Hash256) -> Option<&'b ConsensusMessage>),
+                  known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
                   learner : &ParsedAddress,
                   reference : &'b Hash256,
                   later_reference : &'b Hash256)
@@ -148,7 +133,7 @@ pub fn buried<'b>(config : &ParsedConfig,
 }
 
 pub fn connected_two_as<'a>(config : &ParsedConfig,
-                            known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>),
+                            known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
                             learner : &ParsedAddress,
                             reference : &'a Hash256)
                             -> HashSet<&'a Hash256> {
@@ -163,14 +148,14 @@ pub fn connected_two_as<'a>(config : &ParsedConfig,
 }
 
 pub fn signers<'a, 'b, 'c, T>(config : &'a ParsedConfig,
-                              known_messages : &(fn(&'c Hash256) -> Option<&'b ConsensusMessage>),
+                              known_messages : &impl Fn(&'c Hash256) -> Option<&'b ConsensusMessage>,
                               references : T)
                               -> HashSet<&'a ParsedAddress> 
         where T : IntoIterator<Item = &'c Hash256> {
     references.into_iter().filter_map(|m| signer(config, known_messages, m)).collect()
 }
 
-pub fn is_one_a<'a, 'b>(known_messages : &(fn(&'a Hash256) -> Option<&'b ConsensusMessage>), reference : &'a Hash256)
+pub fn is_one_a<'a, 'b>(known_messages : &impl Fn(&'a Hash256) -> Option<&'b ConsensusMessage>, reference : &'a Hash256)
     -> bool {
     if let Some(message) = known_messages(reference) {
         return message.is_one_a();
@@ -179,7 +164,7 @@ pub fn is_one_a<'a, 'b>(known_messages : &(fn(&'a Hash256) -> Option<&'b Consens
 }
 
 pub fn is_one_b<'a>(config : &ParsedConfig,
-                    known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>),
+                    known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
                     reference : &'a Hash256)
                     -> bool {
     if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
@@ -194,7 +179,7 @@ pub fn is_one_b<'a>(config : &ParsedConfig,
     false
 }
 
-pub fn get_one_a<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>), reference : &'a Hash256)
+pub fn get_one_a<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>, reference : &'a Hash256)
     -> Option<&'a Hash256> {
     transitive_references(known_messages, reference).into_iter()
         .filter(|m| is_one_a(known_messages, m))
@@ -204,7 +189,7 @@ pub fn get_one_a<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusM
         })
 }
 
-pub fn ballot<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>), reference : &'a Hash256)
+pub fn ballot<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>, reference : &'a Hash256)
     -> Option<&'a Ballot> {
     if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) =
             known_messages(get_one_a(known_messages, reference)?) {
@@ -213,13 +198,13 @@ pub fn ballot<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMess
     None
 }
 
-pub fn value<'a>(known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>), reference : &'a Hash256)
+pub fn value<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>, reference : &'a Hash256)
     -> Option<&'a Hash256> {
     ballot(known_messages, reference)?.value_hash.as_ref()
 }
 
 pub fn fresh<'b>(config : &ParsedConfig,
-                 known_messages : &(fn(&'b Hash256) -> Option<&'b ConsensusMessage>),
+                 known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
                  learner : &ParsedAddress,
                  reference : &'b Hash256)
                  -> bool {
@@ -228,7 +213,7 @@ pub fn fresh<'b>(config : &ParsedConfig,
 }
 
 pub fn quorum<'a>(config : &ParsedConfig,
-                  known_messages : &(fn(&'a Hash256) -> Option<&'a ConsensusMessage>),
+                  known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
                   learner : &ParsedAddress,
                   reference : &'a Hash256)
                   -> HashSet<&'a Hash256> {
@@ -241,7 +226,7 @@ pub fn quorum<'a>(config : &ParsedConfig,
 }
 
 pub fn is_two_a_with_learner<'b>(config : &ParsedConfig,
-                                 known_messages : &(fn(&'b Hash256) -> Option<&'b ConsensusMessage>),
+                                 known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
                                  learner : &ParsedAddress,
                                  reference : &'b Hash256)
                                  -> bool {
@@ -268,15 +253,15 @@ pub fn is_two_a_with_learner<'b>(config : &ParsedConfig,
 }
 
 pub fn is_two_a<'b>(config : &ParsedConfig,
-                    known_messages : &(fn(&Hash256) -> Option<&'b ConsensusMessage>),
-                    reference : & Hash256)
+                    known_messages : &impl Fn(&Hash256) -> Option<&'b ConsensusMessage>,
+                    reference : &'b Hash256)
                     -> bool {
     config.learners.keys().any(|learner| is_two_a_with_learner(config, known_messages, learner, reference))
 }
 
 pub fn well_formed<'b>(config : &ParsedConfig,
-                       known_messages : &(fn(&Hash256) -> Option<&'b ConsensusMessage>),
-                       reference : &Hash256)
+                       known_messages : &impl Fn(&Hash256) -> Option<&'b ConsensusMessage>,
+                       reference : &'b Hash256)
                        -> bool {
        is_one_a(known_messages, reference)
     || is_one_b(config, known_messages, reference)

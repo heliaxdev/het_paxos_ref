@@ -1,21 +1,19 @@
-use crate::{grpc::{acceptor_client::AcceptorClient,
+use crate::{grpc::{self,
+                   acceptor_client::AcceptorClient,
                    acceptor_server::{self, AcceptorServer},
                    Ballot,
                    ConsensusMessage,
                    consensus_message::MessageOneof,
                    Hash256,
                    SignedHashSet},
-            parse_config::{ParsedAddress,
-                           ParsedConfig,},
+            message_properties::well_formed,
+            parse_config::ParsedConfig,
             utils::hash};
-use itertools::Itertools;
 use futures_core::{stream::Stream, task::{Context, Poll}};
 use futures_util::StreamExt;
 use std::{borrow::{Borrow, BorrowMut},
           collections::{HashMap, HashSet},
-          iter::once,
           pin::Pin,
-          slice::Iter,
           sync::{Arc, Condvar, Mutex},
           thread::sleep,
           time::{Duration, SystemTime, UNIX_EPOCH}};
@@ -25,7 +23,7 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 
 /// represents each agent's internal configuration
-struct AcceptorState {
+pub struct AcceptorState {
     config : ParsedConfig,
     known_messages : HashMap<Hash256, ConsensusMessage>,
     recent_messages : HashSet<Hash256>,
@@ -34,224 +32,54 @@ struct AcceptorState {
 
 impl AcceptorState { 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
-    fn deliver_message(&mut self, message : ConsensusMessage) {
+    pub fn deliver_message(&mut self, message : ConsensusMessage) {
         let message_hash = hash(&message);
         // if we have not received this message before:
-        if !self.hash_received(&message_hash) {
+        if !self.hash_received(&message_hash) && self.is_well_formed(&message, &message_hash) {
             // echo message to all other participants:
             for out_channel in &self.out_channels {
                 out_channel.send(message.clone())
                     .expect("error while sending message to an out_channel");
             }
-            self.known_messages.insert(message_hash.clone(), message.clone());
-            self.recent_messages.insert(message_hash.clone());
-            // TODO: determine which, if any, messages to generate (and then receive)
+            self.known_messages.insert(message_hash.clone(), message);
+            self.recent_messages.insert(message_hash);
+            let next_message_hash_set = grpc::HashSet{hashes : self.recent_messages.iter().cloned().collect()};
+            let next_message = ConsensusMessage{message_oneof : Some(
+                MessageOneof::SignedHashSet(SignedHashSet{
+                    signature : Some(self.config.private_key.sign_message(&next_message_hash_set)),
+                    hash_set : Some(next_message_hash_set)
+                }))};
+            let next_message_hash = hash(&next_message);
+            if self.is_well_formed(&next_message, &next_message_hash) {
+                self.recent_messages.clear();
+                self.deliver_message(next_message);
+                // note: we can avoid double-checking is_well_formed on our own messages if we pass
+                // along some indication it's from self. 
+                // However, this is an optimization, so I'm not doing it here.
+            }
         }
     }
 
-    fn hash_received(&self, message : &Hash256) -> bool {
+    pub fn is_well_formed<'a>(&'a self, message : &'a ConsensusMessage, hash : &'a Hash256) -> bool {
+        // create a known_messages lookup function that includes this given message
+        // Alas, rust's type inference cannot figure out how to type this without help.
+        let known_messages : Box<dyn Fn(&Hash256) -> Option<&'a ConsensusMessage>> = 
+            Box::new(move |h| if h == hash {Some(message)} else {self.known_messages.get(h)});
+        // use that to look up if this message is well-formed.
+        well_formed(&self.config, &known_messages, &hash)
+    }
+
+    pub fn hash_received(&self, message : &Hash256) -> bool {
         self.known_messages.get(message).is_some()
     }
 
-    fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
+    pub fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
        if let Some(MessageOneof::SignedHashSet(SignedHashSet{hash_set : Some(hashset),..})) =
                &message.message_oneof {
-           hashset.hashes.iter().all(|message_hash| self.hash_received(message_hash))
-       } else {
-           true
+           return hashset.hashes.iter().all(|message_hash| self.hash_received(message_hash));
        }
+       true
     }
-
-
-    /// (Hashes of) all the messages transitively referenced by (the message with the hash of)
-    /// reference.
-    fn transitive_references<'a>(&'a self, reference : &'a Hash256) -> HashSet<&'a Hash256> {
-        fn transitive_references_so_far<'a>(s : &'a AcceptorState,
-                                             mut so_far : HashSet<&'a Hash256>,
-                                             reference : &'a Hash256)
-                                            -> HashSet<&'a Hash256> {
-            if so_far.insert(reference) {
-                if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
-                             SignedHashSet{hash_set : Some(refs),..}))}) = s.known_messages.get(reference) {
-                    return refs.hashes.iter().fold(so_far, |w,r| transitive_references_so_far(s,w,r));
-                }
-            }
-            so_far
-        }
-        transitive_references_so_far(self, HashSet::new(), reference)
-    }
-
-    /// Convert any collection of &Hash256 s into a Vec of ConsensusMessage s
-    /// (with lifetime of self)
-    fn into_messages<'a, 'b, T>(&'a self, hashes : T) -> Vec<&'a ConsensusMessage> 
-            where T : IntoIterator<Item = &'b Hash256> {
-        hashes.into_iter().filter_map(|r| self.known_messages.get(r)).collect()
-    }
-
-    fn signed_by(&self, address : &ParsedAddress, reference : &Hash256) -> bool {
-        if let Some(message) = self.known_messages.get(reference) {
-            return address.signed(message);
-        }
-        false
-    }
-
-    /// Who (if anyone) has (correctly) signed this message?
-    fn signer<'a>(&'a self, reference : &Hash256) -> Option<&'a ParsedAddress> {
-        for address in &self.config.known_addresses {
-            if self.signed_by(address, reference) {
-                return Some(&address);
-            }
-        }
-        None
-    }
-
-    fn caught<'a>(&'a self, reference : &Hash256) -> HashSet<&'a ParsedAddress> {
-        self.transitive_references(reference).iter().combinations(2).filter_map(|pair| {
-            let reference_x = pair.get(0)?;
-            let reference_y = pair.get(1)?;
-            let signer = self.signer(reference_x)?;
-            if   self.signed_by(signer, reference_y)
-              && !self.transitive_references(reference_x).iter().contains(reference_y)
-              && !self.transitive_references(reference_y).iter().contains(reference_x) {
-                return Some(signer);
-            }
-            None
-        }).collect()
-    }
-
-    fn connected_learners(&self,
-                          learner_x : &ParsedAddress,
-                          learner_y : &ParsedAddress,
-                          caught : &HashSet<&ParsedAddress>) -> bool {
-        // does this pair of learners have an uncaught acceptor in each of their quorum
-        // intersections?
-        if let (Some(quorums_x), Some(quorums_y)) =
-               (self.config.learners.get(learner_x), self.config.learners.get(learner_y)) {
-            for quorum_x in quorums_x {
-                for quorum_y in quorums_y {
-                    if caught.is_superset(&quorum_x.intersection(quorum_y).collect()) {
-                        return false;
-                    }
-                }
-            }
-            return (quorums_x.len() > 0) && (quorums_y.len() > 0);
-        }
-        false
-    }
-
-
-    fn connected<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a ParsedAddress> {
-        let caught_acceptors = self.caught(reference);
-        self.config.learners.keys().filter(|x| self.connected_learners(learner, x, &caught_acceptors)).collect()
-    }
-
-    fn buried(&self, learner : &ParsedAddress, reference : &Hash256, later_reference : &Hash256) -> bool {
-        if let (Some(quorums), Some(v), b) =
-            (self.config.learners.get(learner), self.value(reference), self.ballot(reference)) {
-            let sigs = self.signers(self.transitive_references(later_reference).into_iter().filter(|m| {
-                let refs = self.transitive_references(m);
-                refs.contains(reference) && refs.iter().any(|z|
-                    self.is_two_a_with_learner(learner, z)
-                    && Some(v) != self.value(z)
-                    && self.ballot(z) > b)
-            }));
-            return quorums.iter().any(|quorum| quorum.iter().all(|a| sigs.contains(a)));
-        }
-        false
-    }
-
-    fn connected_two_as<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a Hash256> {
-        if let Some(sig) = self.signer(reference) {
-            return self.transitive_references(reference).into_iter().filter(|m|
-                       self.connected(learner, reference).into_iter().any(|lrn|
-                              self.signed_by(sig, m)
-                           && self.is_two_a_with_learner(lrn, m)
-                           && !self.buried(lrn, m, reference))).collect();
-        }
-        HashSet::new()
-    }
-
-    fn signers<'a, 'b, T>(&'a self, references : T) -> HashSet<&'a ParsedAddress> 
-            where T : IntoIterator<Item = &'b Hash256> {
-        references.into_iter().filter_map(|m| self.signer(m)).collect()
-    }
-
-    fn is_one_a(&self, reference : &Hash256) -> bool {
-        if let Some(message) = self.known_messages.get(reference) {
-            return message.is_one_a();
-        }
-        false
-    }
-
-    fn is_one_b(&self, reference : &Hash256) -> bool {
-        if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
-                       SignedHashSet{hash_set : Some(refs),..}))}) = self.known_messages.get(reference) {
-            if let Some(one_a) = self.get_one_a(reference) {
-                // A OneB message is a direct response to a OneA
-                if refs.hashes.iter().contains(one_a) {
-                    return self.signer(reference).is_some();
-                }
-            }
-        }
-        false
-    }
-
-    fn get_one_a<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Hash256> {
-        self.transitive_references(reference).into_iter()
-            .filter(|m| self.is_one_a(m))
-            .max_by_key(|m| match self.known_messages.get(m) {
-                Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) => Some(b),
-                _ => None // since they're all one_as, this should never happen
-            })
-    }
-
-    fn ballot<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Ballot> {
-        if let Some(ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(b))}) =
-                self.known_messages.get(self.get_one_a(reference)?) {
-            return Some(&b);
-        }
-        None
-    }
-
-    fn value<'a>(&'a self, reference : &'a Hash256) -> Option<&'a Hash256> {
-        self.ballot(reference)?.value_hash.as_ref()
-    }
-
-    fn fresh(&self, learner : &ParsedAddress, reference : &Hash256) -> bool {
-        let v = self.value(reference);
-        self.connected_two_as(learner, reference).into_iter().all(|m| self.value(m) == v)
-    }
-
-    fn quorum<'a>(&'a self, learner : &ParsedAddress, reference : &'a Hash256) -> HashSet<&'a Hash256> {
-        let b = self.ballot(reference);
-        self.transitive_references(reference).into_iter()
-            .filter(|m| self.ballot(m) == b)
-            .filter(|m| self.is_one_b(m))
-            .filter(|m| self.fresh(learner, m))
-            .collect()
-    }
-
-    fn is_two_a_with_learner(& self, learner : &ParsedAddress, reference : &Hash256) -> bool {
-        if !self.is_one_b(reference) {
-            if let Some(sig) = self.signer(reference) {
-                if let Some(quorums) = self.config.learners.get(learner) {
-                    let q = self.signers(self.quorum(learner, reference));
-                    return q.contains(sig) && quorums.iter().any(|qi| qi.iter().all(|a| q.contains(a)));
-                }
-            }
-        }
-        false
-    }
-
-    fn is_two_a(& self, reference : & Hash256) -> bool {
-        self.config.learners.keys().any(|learner| self.is_two_a_with_learner(learner, reference))
-    }
-
-    fn well_formed(&self, reference : &Hash256) -> bool {
-        self.is_one_a(reference) || self.is_one_b(reference) || self.is_two_a(reference)
-    }
-
-
 }
 
 struct AcceptorMutex {
@@ -327,7 +155,8 @@ pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::e
         tokio::spawn(async move {
             match AcceptorClient::connect(format!("http://{}:{}", address.hostname, address.port)).await {
                 Ok(mut client) => {
-                    match client.stream_consensus_messages(Request::new(UnboundedReceiverStream::new(acceptor_mutex.add_out_channel()))).await {
+                    match client.stream_consensus_messages(Request::new(
+                            UnboundedReceiverStream::new(acceptor_mutex.add_out_channel()))).await {
                         Ok(response) => response.into_inner().for_each_concurrent(None, |message| async {
                             match message {
                                 Ok(x) => acceptor_mutex.receive_message(x),
