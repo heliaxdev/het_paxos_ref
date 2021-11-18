@@ -211,5 +211,3 @@ impl acceptor_server::Acceptor for Acceptor {
     }
     type StreamConsensusMessagesStream = UnboundedReceiverWrapper<ConsensusMessage>;
 }
-
-//TODO: code to start up an acceptor
