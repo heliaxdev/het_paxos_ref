@@ -150,7 +150,7 @@ pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::e
     let server_future = Server::builder().add_service(AcceptorServer::new(acceptor))
                           .serve(format!("[::1]:{}", port).parse()?);
     // contact all the other servers, in parallel:
-    for address in known_addresses.into_iter() {
+    for await_me in known_addresses.into_iter().map(|address| {
         let acceptor_mutex = acceptor_mutex_clone.clone();
         tokio::spawn(async move {
             match AcceptorClient::connect(format!("http://{}:{}", address.hostname, address.port)).await {
@@ -168,7 +168,9 @@ pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::e
                 },
                 Err(e) => println!("could not connect to {}:{}. Error: {}", address.hostname, address.port, e),
             };
-        }); // TODO: Do I need an "await" here to ensure these connections actually launch?
+        })
+    }).collect::<Vec<_>>() {
+        await_me.await?;
     }
     server_future.await?;
     Ok(())
