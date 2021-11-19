@@ -41,6 +41,9 @@ pub async fn launch_proposer(config : ParsedConfig) -> Result<(), Box<dyn std::e
                     seconds : now.as_secs() as i64,
                     nanos : now.subsec_nanos() as i32 }),
                   value_hash : Some(value_hash.clone())}))};
+
+            println!("proposing {}", &hash(&message));
+
             for (sender, _) in senders_and_threads.iter() {
                 sender.send(message.clone())?;
             }

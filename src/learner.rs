@@ -29,6 +29,9 @@ impl LearnerState {
     pub fn deliver_message<'a>(&'a mut self, message : ConsensusMessage, message_hash : &'a Hash256) {
         // if we have not received this message before:
         if !self.hash_received(message_hash) && self.is_well_formed(&message, message_hash) {
+
+            println!("received {}", message_hash);
+
             self.known_messages.insert(message_hash.clone(), message);
             let known_messages : Box<dyn Fn(&Hash256) -> Option<&'a ConsensusMessage>> =
                 Box::new(|x| self.known_messages.get(x));

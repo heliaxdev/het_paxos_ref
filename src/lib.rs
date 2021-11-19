@@ -33,7 +33,7 @@ pub mod utils {
     use pbjson_types::Timestamp;
     use prost:: Message;
     use sha3::{Digest, Sha3_256};
-    use std::{hash::{Hash, Hasher}, cmp::Ordering};
+    use std::{fmt::{Display, Formatter, Result}, hash::{Hash, Hasher}, cmp::Ordering};
 
     /// Hash a protobuf Message struct with Sha3 into a Hash256 struct.
     /// Bytes marshaled in BigEndian order.
@@ -44,6 +44,16 @@ pub mod utils {
             bytes8_through15  : BigEndian::read_u64(&bytes[8..=15]),
             bytes16_through23 : BigEndian::read_u64(&bytes[16..=23]),
             bytes24_through31 : BigEndian::read_u64(&bytes[24..=31]),
+        }
+    }
+
+    impl Display for Hash256 {
+        fn fmt(&self, f : &mut Formatter<'_>) -> Result {
+            write!(f, "Hash256{{{:016x}{:016x}{:016x}{:016x}}}",
+                self.bytes0_through7,
+                self.bytes8_through15,
+                self.bytes16_through23,
+                self.bytes24_through31)
         }
     }
 

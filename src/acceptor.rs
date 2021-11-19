@@ -36,6 +36,9 @@ impl AcceptorState {
         let message_hash = hash(&message);
         // if we have not received this message before:
         if !self.hash_received(&message_hash) && self.is_well_formed(&message, &message_hash) {
+
+            println!("forwarding message {}", &message_hash);
+
             // echo message to all other participants:
             for out_channel in &self.out_channels {
                 out_channel.send(message.clone())
@@ -51,6 +54,12 @@ impl AcceptorState {
                 }))};
             let next_message_hash = hash(&next_message);
             if self.is_well_formed(&next_message, &next_message_hash) {
+
+                println!("sending message {} referencing:", &next_message_hash);
+                for recent_message_hash in self.recent_messages.iter() {
+                    println!("    {}", &recent_message_hash);
+                }
+
                 self.recent_messages.clear();
                 self.deliver_message(next_message);
                 // note: we can avoid double-checking is_well_formed on our own messages if we pass
