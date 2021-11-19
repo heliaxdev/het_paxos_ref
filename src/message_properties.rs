@@ -80,8 +80,8 @@ pub fn caught<'a, 'b>(config : &'a ParsedConfig,
 }
 
 pub fn connected_learners(config : &ParsedConfig,
-                          learner_x : &ParsedAddress,
-                          learner_y : &ParsedAddress,
+                          learner_x : &String,
+                          learner_y : &String,
                           caught : &HashSet<&ParsedAddress>)
                           -> bool {
     // does this pair of learners have an uncaught acceptor in each of their quorum
@@ -103,16 +103,16 @@ pub fn connected_learners(config : &ParsedConfig,
 
 pub fn connected<'a, 'b>(config : &'a ParsedConfig,
                          known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
-                         learner : &ParsedAddress,
+                         learner : &String,
                          reference : &'b Hash256)
-                         -> HashSet<&'a ParsedAddress> {
+                         -> HashSet<&'a String> {
     let caught_acceptors = caught(config, known_messages, reference);
     config.learners.keys().filter(|x| connected_learners(config, learner, x, &caught_acceptors)).collect()
 }
 
 pub fn buried<'b>(config : &ParsedConfig,
                   known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
-                  learner : &ParsedAddress,
+                  learner : &String,
                   reference : &'b Hash256,
                   later_reference : &'b Hash256)
                   -> bool {
@@ -134,7 +134,7 @@ pub fn buried<'b>(config : &ParsedConfig,
 
 pub fn connected_two_as<'a>(config : &ParsedConfig,
                             known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
-                            learner : &ParsedAddress,
+                            learner : &String,
                             reference : &'a Hash256)
                             -> HashSet<&'a Hash256> {
     if let Some(sig) = signer(config, known_messages, reference) {
@@ -205,7 +205,7 @@ pub fn value<'a>(known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusM
 
 pub fn fresh<'b>(config : &ParsedConfig,
                  known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
-                 learner : &ParsedAddress,
+                 learner : &String,
                  reference : &'b Hash256)
                  -> bool {
     let v = value(known_messages, reference);
@@ -214,7 +214,7 @@ pub fn fresh<'b>(config : &ParsedConfig,
 
 pub fn quorum<'a>(config : &ParsedConfig,
                   known_messages : &impl Fn(&'a Hash256) -> Option<&'a ConsensusMessage>,
-                  learner : &ParsedAddress,
+                  learner : &String,
                   reference : &'a Hash256)
                   -> HashSet<&'a Hash256> {
     let b = ballot(known_messages, reference);
@@ -227,7 +227,7 @@ pub fn quorum<'a>(config : &ParsedConfig,
 
 pub fn is_two_a_with_learner<'b>(config : &ParsedConfig,
                                  known_messages : &impl Fn(&'b Hash256) -> Option<&'b ConsensusMessage>,
-                                 learner : &ParsedAddress,
+                                 learner : &String,
                                  reference : &'b Hash256)
                                  -> bool {
     if !is_one_b(config, known_messages, reference) {

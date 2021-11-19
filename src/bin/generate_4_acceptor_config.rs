@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>>{
     let carol = "Carol".to_string();
     let dave = "Dave".to_string();
     let eve = "Eve".to_string();
-    let addresses : Vec<_> = [&alice,&bob,&carol,&dave,&eve].iter().enumerate().map(
+    let addresses : Vec<_> = [&alice,&bob,&carol,&dave].iter().enumerate().map(
         |(i, name)| {
             let (public_key, private_key) = new_key_pair(&["localhost".to_string()]);
             (private_key, 

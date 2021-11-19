@@ -35,7 +35,7 @@ pub struct ParsedConfig {
     pub proposal : Option<String>,
     pub private_key : PrivateKey,
     pub address : ParsedAddress,
-    pub learners : HashMap<ParsedAddress, Vec<HashSet<ParsedAddress>>>,
+    pub learners : HashMap<String, Vec<HashSet<ParsedAddress>>>,
 }
 
 
@@ -63,7 +63,7 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
         addresses_by_name.get(name).expect(&format!("name {} not found in addresses", name)).clone();
     let learners = grpc_learners.iter().map(
         |(learner_name, mqs)|
-          (get_address(learner_name),
+          (learner_name.to_string(),
            mqs.quorums.iter().map(|q| q.names.iter().map(get_address).collect()).collect())).collect();
     let proposal = if proposal_string.len() > 0 {Some(proposal_string)} else {None};
     Ok(ParsedConfig{

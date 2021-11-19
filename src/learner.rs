@@ -44,7 +44,7 @@ impl LearnerState {
                                  ballot(&known_messages, reference) == b
                               && is_two_a_with_learner(&self.config, &known_messages, learner, reference)));
                     if quorums.iter().any(|quorum| quorum.iter().all(|acceptor| signatures.contains(acceptor))) {
-                        println!("Learner {} decided in Ballot {:?}", learner.public_key, b);
+                        println!("Learner {} decided in Ballot {:?}", learner, b);
                     }
                 }
             }
