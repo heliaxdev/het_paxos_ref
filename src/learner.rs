@@ -9,7 +9,7 @@ use crate::{grpc::{acceptor_client::AcceptorClient,
                                  well_formed},
             parse_config::ParsedConfig,
             utils::hash};
-use futures_util::StreamExt;
+use futures_util::{future::join_all, StreamExt};
 use std::{borrow::BorrowMut,
           collections::HashMap,
           sync::{Arc, Condvar, Mutex}};
@@ -117,7 +117,7 @@ pub async fn launch_learner(config : ParsedConfig) -> Result<(), Box<dyn std::er
     let learner = new_learner(config);
     let learner_mutex_clone = learner.0.clone();
     // contact all the other servers, in parallel:
-    for await_me in known_addresses.into_iter().map(|address| {
+    for await_me in join_all(known_addresses.into_iter().map(|address| {
         let learner_mutex = learner_mutex_clone.clone();
         tokio::spawn(async move {
             match AcceptorClient::connect(format!("http://{}:{}", address.hostname, address.port)).await {
@@ -136,8 +136,8 @@ pub async fn launch_learner(config : ParsedConfig) -> Result<(), Box<dyn std::er
                 Err(e) => println!("could not connect to {}:{}. Error: {}", address.hostname, address.port, e),
             };
         })
-    }).collect::<Vec<_>>() {
-        await_me.await?;
+    })).await {
+        await_me?;
     }
     Ok(())
 }

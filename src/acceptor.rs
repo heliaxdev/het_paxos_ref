@@ -10,7 +10,7 @@ use crate::{grpc::{self,
             parse_config::ParsedConfig,
             utils::hash};
 use futures_core::{stream::Stream, task::{Context, Poll}};
-use futures_util::StreamExt;
+use futures_util::{future::join_all, join, StreamExt};
 use std::{borrow::{Borrow, BorrowMut},
           collections::{HashMap, HashSet},
           pin::Pin,
@@ -42,7 +42,7 @@ impl AcceptorState {
             // echo message to all other participants:
             for out_channel in &self.out_channels {
                 out_channel.send(message.clone())
-                    .expect("error while sending message to an out_channel");
+                  .unwrap_or_else(|_| eprintln!("error while sending message to an out_channel"));
             }
             self.known_messages.insert(message_hash.clone(), message);
             self.recent_messages.insert(message_hash);
@@ -156,32 +156,34 @@ pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::e
     let acceptor = new_acceptor(config);
     let acceptor_mutex_clone = acceptor.0.clone();
     // launch the server thread:
-    let server_future = Server::builder().add_service(AcceptorServer::new(acceptor))
-                          .serve(format!("[::1]:{}", port).parse()?);
-    // contact all the other servers, in parallel:
-    for await_me in known_addresses.into_iter().map(|address| {
-        let acceptor_mutex = acceptor_mutex_clone.clone();
-        tokio::spawn(async move {
-            match AcceptorClient::connect(format!("http://{}:{}", address.hostname, address.port)).await {
-                Ok(mut client) => {
-                    match client.stream_consensus_messages(Request::new(
-                            UnboundedReceiverStream::new(acceptor_mutex.add_out_channel()))).await {
-                        Ok(response) => response.into_inner().for_each_concurrent(None, |message| async {
-                            match message {
-                                Ok(x) => acceptor_mutex.receive_message(x),
-                                Err(y) => eprintln!("status error instead of message: {}", y)
-                            }
-                        }).await,
-                        Err(x) => println!("{}:{} server returned error: {}", address.hostname, address.port, x),
-                    }
-                },
-                Err(e) => println!("could not connect to {}:{}. Error: {}", address.hostname, address.port, e),
-            };
-        })
-    }).collect::<Vec<_>>() {
-        await_me.await?;
+    let (r, vr) = join!(Server::builder().add_service(AcceptorServer::new(acceptor))
+              .serve(format!("[::1]:{}", port).parse()?),
+          // contact all the other servers, in parallel:
+          join_all(known_addresses.into_iter().map(|address| {
+              let acceptor_mutex = acceptor_mutex_clone.clone();
+              tokio::spawn(async move {
+                  match AcceptorClient::connect(format!("http://{}:{}", address.hostname, address.port)).await {
+                      Ok(mut client) => {
+                          match client.stream_consensus_messages(Request::new(
+                                  UnboundedReceiverStream::new(acceptor_mutex.add_out_channel()))).await {
+                              Ok(response) => response.into_inner().for_each_concurrent(None, |message| async {
+                                  match message {
+                                      Ok(x) => acceptor_mutex.receive_message(x),
+                                      // Note, when someone shuts down, we get A LOT of these.
+                                      Err(y) => eprintln!("status error instead of message: {}", y)
+                                  }
+                              }).await,
+                              Err(x) => println!("{}:{} server returned error: {}", address.hostname, address.port, x),
+                          }
+                      },
+                      Err(e) => println!("could not connect to {}:{}. Error: {}", address.hostname, address.port, e),
+                  };
+              })
+          })));
+    r?;
+    for r in vr {
+        r?;
     }
-    server_future.await?;
     Ok(())
 }
 
