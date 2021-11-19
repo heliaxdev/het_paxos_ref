@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod learner;
 pub mod message_properties;
 pub mod parse_config;
+pub mod proposer;
 
 pub mod grpc {
     tonic::include_proto!("hetpaxosref");
