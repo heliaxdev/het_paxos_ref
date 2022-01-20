@@ -15,67 +15,67 @@ use std::{collections:: {HashMap, HashSet},
 
 
 #[derive(Debug)]
-pub struct ParsedMessage<'a> {
-    my_original : &'a ConsensusMessage,
-    my_hash : &'a Hash256,
-    transitive_references_excluding_self : HashSet<&'a ParsedMessage<'a>>,
-    my_one_a : Option<&'a ParsedMessage<'a>>,
-    my_signer : Option<&'a ParsedAddress>,
-    my_caught : HashSet<&'a ParsedAddress>,
-    my_connected_learners : HashMap<&'a String, HashSet<&'a String>>,
-    my_buried_two_as : HashMap<&'a String, HashSet<&'a ParsedMessage<'a>>>,
-    my_connected_two_as : HashMap<&'a String, HashSet<&'a ParsedMessage<'a>>>,
+pub struct ParsedMessage {
+    my_original : ConsensusMessage,
+    my_hash : Hash256,
+    transitive_references_excluding_self : HashSet<Arc<ParsedMessage>>,
+    my_one_a : Option<Arc<ParsedMessage>>,
+    my_signer : Option<Arc<ParsedAddress>>,
+    my_caught : HashSet<Arc<ParsedAddress>>,
+    my_connected_learners : HashMap<Arc<String>, HashSet<Arc<String>>>,
+    my_buried_two_as : HashMap<Arc<String>, HashSet<Arc<ParsedMessage>>>,
+    my_connected_two_as : HashMap<Arc<String>, HashSet<Arc<ParsedMessage>>>,
     i_am_one_b : bool,
-    i_am_fresh : HashMap<&'a String, bool>,
-    my_quorum : HashMap<&'a String, HashSet<&'a ParsedMessage<'a>>>,
-    my_two_a_learners : HashSet<&'a String>,
-    empty_learners : HashSet<&'static String>,
-    empty_messages : HashSet<&'a ParsedMessage<'a>>,
+    i_am_fresh : HashMap<Arc<String>, bool>,
+    my_quorum : HashMap<Arc<String>, HashSet<Arc<ParsedMessage>>>,
+    my_two_a_learners : HashSet<Arc<String>>,
+    empty_learners : HashSet<Arc<String>>,
+    empty_messages : HashSet<Arc<ParsedMessage>>,
 }
 
 // Define some basically useful properties:
 // mostly we'll just use the hash as a proxy for equality, ordering, etc.
 
-impl<'a> PartialEq for ParsedMessage<'a> {
+impl PartialEq for ParsedMessage {
     fn eq(&self, other : &Self) -> bool {
         self.get_hash() == other.get_hash()
     }
 }
-impl<'a> Eq for ParsedMessage<'a> {}
-impl<'a> Ord for ParsedMessage<'a> {
+impl Eq for ParsedMessage {}
+impl Ord for ParsedMessage {
     fn cmp(&self, other : &Self) -> Ordering {
         self.get_hash().cmp(other.get_hash())
     }
 }
-impl<'a> PartialOrd for ParsedMessage<'a> {
+impl PartialOrd for ParsedMessage {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl<'a> Display for ParsedMessage<'a> {
+impl Display for ParsedMessage {
     fn fmt(&self, f : &mut Formatter<'_>) -> Result {
         write!(f, "ParsedMessage{{{}}}", self.get_hash())
     }
 }
-impl<'a> Hash for ParsedMessage<'a> {
+impl Hash for ParsedMessage {
     fn hash<H: Hasher>(&self, state : &mut H) {
         self.get_hash().hash(state)
     }
 }
 
 /// Now the real work begins
-impl<'a> ParsedMessage<'a> {
+impl<'a> Arc<ParsedMessage> {
     // accessors useful once this is assembled:
-    pub fn get_hash(&self) -> &'a Hash256 {
-        self.my_hash
+    pub fn get_hash(&'a self) -> &'a Hash256 {
+        &self.my_hash
     }
-    pub fn transitive_references(&'a self) -> HashSet<&'a ParsedMessage<'a>> {
-        once(self).chain(self.transitive_references_excluding_self.clone().into_iter()).collect()
+    pub fn transitive_references(&self) -> HashSet<Arc<ParsedMessage>> {
+        once(self.clone()).chain(self.transitive_references_excluding_self.clone().into_iter()).collect()
     }
-    pub fn original(&self) -> &'a ConsensusMessage {
+    pub fn original('a &self) -> &'a ConsensusMessage {
         self.my_original
     }
-    pub fn one_a(&'a self) -> &'a ParsedMessage<'a> {
+    pub fn one_a(&'a self) -> &'a Arc<ParsedMessage> {
         self.my_one_a.unwrap_or(self)
     }
     pub fn is_one_a(&self) -> bool {
@@ -90,53 +90,54 @@ impl<'a> ParsedMessage<'a> {
     pub fn value_hash(&'a self) -> &'a Hash256 {
         &self.ballot().value_hash.as_ref().expect(&format!("ballot with no value hash: {:?}", self.one_a()))
     }
-    pub fn signer(&self) -> &Option<&'a ParsedAddress> {
-        &self.my_signer
+    pub fn signer(&'a self) -> &'a Option<Arc<ParsedAddress>> {
+        self.my_signer
     }
-    pub fn caught(&self) -> &HashSet<&'a ParsedAddress> {
+    pub fn caught(&'a self) -> &'a HashSet<Arc<ParsedAddress>> {
         &self.my_caught
     }
-    pub fn connected(&self, learner : &'a String) -> &HashSet<&'a String> {
+    pub fn connected(&self, learner : &Arc<String>) -> &HashSet<Arc<String>> {
         self.my_connected_learners.get(learner).unwrap_or(&self.empty_learners)
     }
-    pub fn buried(&self, learner : &'a String) -> &HashSet<&'a ParsedMessage<'a>> {
+    pub fn buried(&self, learner : &Arc<String>) -> &HashSet<Arc<ParsedMessage>> {
         self.my_buried_two_as.get(learner).unwrap_or(&self.empty_messages)
     }
-    pub fn connected_two_as(&self, learner : &'a String) -> &HashSet<&'a ParsedMessage<'a>> {
+    pub fn connected_two_as(&self, learner : &Arc<String>) -> &HashSet<Arc<ParsedMessage>> {
         self.my_connected_two_as.get(learner).unwrap_or(&self.empty_messages)
     }
     pub fn is_one_b(&self) -> bool {
         self.i_am_one_b
     }
-    pub fn fresh(&self, learner : &'a String) -> bool {
+    pub fn fresh(&self, learner : &Arc<String>) -> bool {
         *self.i_am_fresh.get(learner).unwrap_or(&false)
     }
-    pub fn quorum(&self, learner : &'a String) -> &HashSet<&'a ParsedMessage<'a>> {
+    pub fn quorum(&self, learner : &Arc<String>) -> &HashSet<Arc<ParsedMessage>> {
         self.my_quorum.get(learner).clone().unwrap_or(&self.empty_messages)
     }
-    pub fn two_a_learners(&self) -> &HashSet<&'a String> {
+    pub fn two_a_learners(&self) -> &HashSet<Arc<String>> {
         &self.my_two_a_learners
     }
-    pub fn is_two_a_with_learner(&self, learner : &'a String) -> bool {
+    pub fn is_two_a_with_learner(&self, learner : &Arc<String>) -> bool {
         self.two_a_learners().contains(learner)
     }
     pub fn is_two_a(&self) -> bool {
         !self.two_a_learners().is_empty()
     }
+}
 
-
-    // TODO: debug setting all those fields...
+impl ParsedMessage {
+    // TODO: adjust everything to now use Arcs
     // return None when the message is not well-formed.
-    pub fn new(my_original : &'a ConsensusMessage,
-               my_hash : &'a Hash256,
-               config : &'a ParsedConfig, 
-               known_messages : &impl Fn(&'a Hash256) -> Option<&'a ParsedMessage<'a>>,
-    ) -> Option<ParsedMessage<'a>> {
+    pub fn new(my_original : ConsensusMessage,
+               my_hash : Hash256,
+               config : ParsedConfig, 
+               known_messages : &impl Fn(&Hash256) -> Option<&Arc<ParsedMessage>>,
+    ) -> Option<ParsedMessage> {
 
         fn connected_learners(config : &ParsedConfig,
-                              learner_x : &String,
-                              learner_y : &String,
-                              caught : &HashSet<&ParsedAddress>)
+                              learner_x : &Arc<String>,
+                              learner_y : &Arc<String>,
+                              caught : &HashSet<Arc<ParsedAddress>>)
                               -> bool {
             // does this pair of learners have an uncaught acceptor in each of their quorum
             // intersections?
@@ -153,20 +154,20 @@ impl<'a> ParsedMessage<'a> {
             }
             false
         }
-        fn connected<'a>(config : &'a ParsedConfig,
-                         learner : &String,
-                         caught : &HashSet<&ParsedAddress>)
-                         -> HashSet<&'a String> {
-            config.learners.keys().filter(|x| connected_learners(config, learner, x, &caught)).collect()
+        fn connected<'a>(config : &ParsedConfig,
+                         learner : &Arc<String>,
+                         caught : &HashSet<Arc<ParsedAddress>>)
+                         -> HashSet<Arc<String>> {
+            config.learners.keys().filter(|x| connected_learners(config, learner, x, &caught)).map(|x| x.clone()).collect()
         }
 
-        fn connected_learners_map<'a>(config : &'a ParsedConfig,
-                                      caught : &HashSet<&ParsedAddress>)
-                                      -> HashMap<&'a String, HashSet<&'a String>> {
-            config.learners.keys().map(|k| (k, connected(config, k, caught))).collect()
+        fn connected_learners_map<'a>(config : &ParsedConfig,
+                                      caught : &HashSet<Arc<ParsedAddress>>)
+                                      -> HashMap<Arc<String>, HashSet<Arc<String>>> {
+            config.learners.keys().map(|k| (k.clone(), connected(config, k, caught))).collect()
         }
 
-        fn sigs<'a>(messages : impl Iterator<Item = &'a &'a ParsedMessage<'a>>) -> HashSet<&'a ParsedAddress> {
+        fn sigs<'a>(messages : impl Iterator<Item = &Arc<ParsedMessage>>) -> HashSet<Arc<ParsedAddress>> {
             messages.filter_map(|m| m.signer().as_ref()).map(|x| *x).collect()
         }
 
@@ -194,8 +195,8 @@ impl<'a> ParsedMessage<'a> {
         if let ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
                    SignedHashSet{hash_set : Some(refs),..}))} = my_original {
             let ref_messages : HashSet<_> = refs.hashes.iter().filter_map(known_messages).collect();
-            let transitive_references_excluding_self : HashSet<&'a ParsedMessage<'a>> = ref_messages.iter()
-                    .fold(HashSet::new(), |x,y| x.union(&y.transitive_references()).map(|x| *x).collect());
+            let transitive_references_excluding_self : HashSet<Arc<ParsedMessage>> = ref_messages.iter()
+                    .fold(HashSet::new(), |x,y| x.union(y.transitive_references()).map(|x| x.clone()).collect());
             let my_caught = ref_messages.iter().fold(
                             // if any referenced message, with any transitively referenced message,
                             // catches anyone:
