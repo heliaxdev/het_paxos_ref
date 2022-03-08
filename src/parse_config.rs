@@ -46,16 +46,16 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
                  proposal : proposal_string,
                  learners : grpc_learners,
                  addresses : grpc_addresses } = serde_json::from_str(s)?;
-    let known_addresses : Vec<ParsedAddress> = grpc_addresses.into_iter().map(
+    let known_addresses : Vec<Arc<ParsedAddress>> = grpc_addresses.into_iter().map(
         |Address{name, hostname, port, public_key}| 
-            ParsedAddress {
+            Arc::new(ParsedAddress {
                 name,
                 hostname,
                 port,
                 public_key : PublicKey::new_default_scheme(public_key),
-            }).collect();
-    let addresses_by_name : HashMap<String, ParsedAddress> = known_addresses.iter().map(
-        |address| (address.name.clone(), Arc::new(address.clone()))).collect();
+            })).collect();
+    let addresses_by_name : HashMap<String, Arc<ParsedAddress>> = known_addresses.iter().map(
+        |address| (address.name.clone(), address.clone())).collect();
     let private_key = PrivateKey::new_default_scheme(private_key_string);
     let signature = private_key.sign_bytes(&vec![1,2,3,4,5][..]);
     let address = known_addresses.iter().find(

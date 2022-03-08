@@ -1,7 +1,6 @@
 pub mod acceptor;
 pub mod crypto;
 pub mod learner;
-pub mod message_properties;
 pub mod parse_config;
 pub mod parsed_message;
 pub mod proposer;

@@ -6,8 +6,9 @@ use crate::{grpc::{self,
                    consensus_message::MessageOneof,
                    Hash256,
                    SignedHashSet},
-            message_properties::well_formed,
             parse_config::ParsedConfig,
+            parsed_message::{ParsedMessage,
+                             ParsedMessageRef},
             utils::hash};
 use futures_core::{stream::Stream, task::{Context, Poll}};
 use futures_util::{future::join_all, join, StreamExt};
@@ -25,7 +26,7 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 /// represents each agent's internal configuration
 pub struct AcceptorState {
     config : ParsedConfig,
-    known_messages : HashMap<Hash256, ConsensusMessage>,
+    known_messages : HashMap<Hash256, Arc<ParsedMessage>>,
     recent_messages : HashSet<Hash256>,
     out_channels : Vec<UnboundedSender<ConsensusMessage>>,
 }
@@ -35,47 +36,52 @@ impl AcceptorState {
     pub fn deliver_message(&mut self, message : ConsensusMessage) {
         let message_hash = hash(&message);
         // if we have not received this message before:
-        if !self.hash_received(&message_hash) && self.is_well_formed(&message, &message_hash) {
+        if !self.hash_received(&message_hash) {
+            if let Some(message) = self.is_well_formed(message, message_hash.clone()) {
 
-            println!("forwarding message {}", &message_hash);
+                println!("forwarding message {}", &message_hash);
 
-            // echo message to all other participants:
-            for out_channel in &self.out_channels {
-                out_channel.send(message.clone())
-                  .unwrap_or_else(|_| eprintln!("error while sending message to an out_channel"));
-            }
-            self.known_messages.insert(message_hash.clone(), message);
-            self.recent_messages.insert(message_hash);
-            let next_message_hash_set = grpc::HashSet{hashes : self.recent_messages.iter().cloned().collect()};
-            let next_message = ConsensusMessage{message_oneof : Some(
-                MessageOneof::SignedHashSet(SignedHashSet{
-                    signature : Some(self.config.private_key.sign_message(&next_message_hash_set)),
-                    hash_set : Some(next_message_hash_set)
-                }))};
-            let next_message_hash = hash(&next_message);
-            if self.is_well_formed(&next_message, &next_message_hash) {
-
-                println!("sending message {} referencing:", &next_message_hash);
-                for recent_message_hash in self.recent_messages.iter() {
-                    println!("    {}", &recent_message_hash);
+                // echo message to all other participants:
+                for out_channel in &self.out_channels {
+                    out_channel.send(message.original().clone())
+                      .unwrap_or_else(|_| eprintln!("error while sending message to an out_channel"));
                 }
+                self.known_messages.insert(message_hash.clone(), message);
+                self.recent_messages.insert(message_hash);
+                let next_message_hash_set = grpc::HashSet{hashes : self.recent_messages.iter().cloned().collect()};
+                let next_message = ConsensusMessage{message_oneof : Some(
+                    MessageOneof::SignedHashSet(SignedHashSet{
+                        signature : Some(self.config.private_key.sign_message(&next_message_hash_set)),
+                        hash_set : Some(next_message_hash_set)
+                    }))};
+                let next_message_hash = hash(&next_message);
+                if  self.is_well_formed(next_message.clone(), next_message_hash.clone()).is_some() {
 
-                self.recent_messages.clear();
-                self.deliver_message(next_message);
-                // note: we can avoid double-checking is_well_formed on our own messages if we pass
-                // along some indication it's from self. 
-                // However, this is an optimization, so I'm not doing it here.
+                    println!("sending message {} referencing:", &next_message_hash);
+                    for recent_message_hash in self.recent_messages.iter() {
+                        println!("    {}", &recent_message_hash);
+                    }
+
+                    self.recent_messages.clear();
+                    self.deliver_message(next_message);
+                    // note: we can avoid double-checking is_well_formed on our own messages if we pass
+                    // along some indication it's from self. 
+                    // However, this is an optimization, so I'm not doing it here.
+                }
             }
         }
     }
 
-    pub fn is_well_formed<'a>(&'a self, message : &'a ConsensusMessage, hash : &'a Hash256) -> bool {
+    pub fn is_well_formed(&self, message : ConsensusMessage, hash : Hash256) -> Option<Arc<ParsedMessage>> {
         // create a known_messages lookup function that includes this given message
         // Alas, rust's type inference cannot figure out how to type this without help.
-        let known_messages : Box<dyn Fn(&Hash256) -> Option<&'a ConsensusMessage>> = 
-            Box::new(move |h| if h == hash {Some(message)} else {self.known_messages.get(h)});
-        // use that to look up if this message is well-formed.
-        well_formed(&self.config, &known_messages, &hash)
+        let known_messages : Box<dyn Fn(&Hash256) -> Option<Arc<ParsedMessage>>> = 
+            Box::new(move |h| if let Some(x) = self.known_messages.get(h) {Some(x.clone())} else {None});
+        if let Some(x) = ParsedMessage::new(message, hash, &self.config, &known_messages) {
+            Some(Arc::new(x)) 
+        } else {
+            None
+        }
     }
 
     pub fn hash_received(&self, message : &Hash256) -> bool {
@@ -128,7 +134,7 @@ impl AcceptorMutex {
         let mut guard = self.mutex.lock().unwrap();
         // send all known messages
         for message in guard.borrow().known_messages.values() {
-            sender.send(message.clone()).unwrap_or_else(
+            sender.send(message.original().clone()).unwrap_or_else(
                 |e| eprintln!("problem sending a message in an UnboundedSender: {}", e))
         }
         // add it to the set of senders

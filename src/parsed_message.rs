@@ -110,7 +110,10 @@ impl ParsedMessageRef for Arc<ParsedMessage> {
         &self.my_original
     }
     fn one_a<'a>(&'a self) -> &'a Arc<ParsedMessage> {
-        &self.my_one_a.unwrap_or(*self)
+        match &self.my_one_a {
+            Some(x) => &x,
+            _ => &self
+        }
     }
     fn is_one_a(&self) -> bool {
         self.my_one_a.is_none()
@@ -149,8 +152,8 @@ impl ParsedMessage {
     // return None when the message is not well-formed.
     pub fn new(my_original : ConsensusMessage,
                my_hash : Hash256,
-               config : ParsedConfig, 
-               known_messages : &impl Fn(&Hash256) -> Option<&Arc<ParsedMessage>>,
+               config : &ParsedConfig, 
+               known_messages : &impl Fn(&Hash256) -> Option<Arc<ParsedMessage>>,
     ) -> Option<ParsedMessage> {
 
         fn connected_learners(config : &ParsedConfig,
@@ -199,7 +202,7 @@ impl ParsedMessage {
                 my_one_a : None,
                 my_signer : None,
                 my_caught : HashSet::new(),
-                my_connected_learners : connected_learners_map(&config, &HashSet::new()),
+                my_connected_learners : connected_learners_map(config, &HashSet::new()),
                 my_buried_two_as : HashMap::new(),
                 my_connected_two_as : HashMap::new(),
                 i_am_one_b : false,
@@ -212,7 +215,7 @@ impl ParsedMessage {
         }
         // if we're not a 1a, we should realy have some transitive references:
         if let ConsensusMessage{message_oneof : Some(MessageOneof::SignedHashSet(
-                   SignedHashSet{hash_set : Some(refs),..}))} = my_original {
+                   SignedHashSet{hash_set : Some(ref refs),..}))} = my_original {
             let ref_messages : HashSet<_> = refs.hashes.iter().filter_map(known_messages).collect();
             let transitive_references_excluding_self : HashSet<Arc<ParsedMessage>> = ref_messages.iter()
                     .fold(HashSet::new(), |x,y| x.union(&y.transitive_references()).map(|x| x.clone()).collect());
@@ -231,8 +234,8 @@ impl ParsedMessage {
                                     }
                                 ).map(|x| x.clone()).collect::<HashSet<Arc<ParsedAddress>>>(),
                             // union everyone we've already caught:
-                            |x,y| x.union(y.caught()).map(|x| *x).collect());
-            let my_connected_learners = connected_learners_map(&config, &my_caught);
+                            |x,y| x.union(y.caught()).map(|x| x.clone()).collect());
+            let my_connected_learners = connected_learners_map(config, &my_caught);
             let my_buried_two_as = config.learners.iter().map(|(learner, quorums)| (learner.clone(),
                     transitive_references_excluding_self.iter()
                     .filter(|x| x.is_two_a_with_learner(learner))
@@ -246,11 +249,12 @@ impl ParsedMessage {
                          quorums.iter().any(|quorum| quorum.iter().all(|a| s.contains(a)))
                     }).map(|x| x.clone()).collect::<HashSet<Arc<ParsedMessage>>>()
                 )).collect::<HashMap<Arc<String>, HashSet<Arc<ParsedMessage>>>>();
-            let my_one_a = transitive_references_excluding_self.iter().map(|x| *x)
+            let my_one_a = transitive_references_excluding_self.iter()
                              .filter(|x| x.is_one_a())
-                             .max_by_key(|x| x.ballot());
-            if let Some(one_a) = my_one_a {
-                let i_am_one_b = ref_messages.iter().contains(&&one_a);
+                             .map(|x| x.clone())
+                             .max_by_key(|x| x.ballot().clone());
+            if let Some(ref one_a) = my_one_a {
+                let i_am_one_b = ref_messages.iter().contains(&one_a);
                 if let ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(ballot))} = one_a.original() {
                     let my_quorum = config.learners.keys().map(|learner| (learner.clone(),
                             transitive_references_excluding_self.iter().filter(|m|
@@ -300,7 +304,7 @@ impl ParsedMessage {
                                             my_hash,
                                             transitive_references_excluding_self,
                                             my_one_a,
-                                            my_signer : Some(*my_address),
+                                            my_signer,
                                             my_caught,
                                             my_connected_learners,
                                             my_buried_two_as,
