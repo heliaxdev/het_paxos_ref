@@ -69,7 +69,7 @@ impl LearnerState {
         // create a known_messages lookup function that includes this given message
         // Alas, rust's type inference cannot figure out how to type this without help.
         let known_messages : Box<dyn Fn(&Hash256) -> Option<Arc<ParsedMessage>>> = 
-            Box::new(move |h| if let Some(x) = self.known_messages.get(h) {Some(x.clone())} else {None});
+            Box::new(move |h| self.known_messages.get(h).map(|x| x.clone()));
         ParsedMessage::new(message, hash, &self.config, &known_messages).map(Arc::new)
     }
 

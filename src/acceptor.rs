@@ -65,6 +65,8 @@ impl AcceptorState {
                 }
                 self.known_messages.insert(message_hash.clone(), message);
                 self.recent_messages.insert(message_hash);
+                // Optimization opportunity (not implemented here):
+                // We could remove anything in message.transitive_references() from recent_messages.
                 let next_message_hash_set = grpc::HashSet{hashes : self.recent_messages.iter().cloned().collect()};
                 let next_message = ConsensusMessage{message_oneof : Some(
                     MessageOneof::SignedHashSet(SignedHashSet{
@@ -81,9 +83,9 @@ impl AcceptorState {
 
                     self.recent_messages.clear();
                     self.deliver_message(next_message);
-                    // note: we can avoid double-checking is_well_formed on our own messages if we pass
-                    // along some indication it's from self. 
-                    // However, this is an optimization, so I'm not doing it here.
+                    // Optimization opportunity (not implemented here):
+                    // We can avoid double-checking is_well_formed on our own messages if we pass
+                    //   along some indication it's from self. 
                 }
             }
         }
@@ -93,7 +95,7 @@ impl AcceptorState {
         // create a known_messages lookup function that includes this given message
         // Alas, rust's type inference cannot figure out how to type this without help.
         let known_messages : Box<dyn Fn(&Hash256) -> Option<Arc<ParsedMessage>>> = 
-            Box::new(move |h| if let Some(x) = self.known_messages.get(h) {Some(x.clone())} else {None});
+            Box::new(move |h| self.known_messages.get(h).map(|x| x.clone()));
         ParsedMessage::new(message, hash, &self.config, &known_messages).map(Arc::new)
     }
 
