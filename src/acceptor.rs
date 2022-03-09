@@ -40,6 +40,23 @@ impl AcceptorState {
             if let Some(message) = self.is_well_formed(message, message_hash.clone()) {
 
                 println!("forwarding message {}", &message_hash);
+                if let Some(address) = message.signer() {
+                    println!("  from: {}", &address.name);
+                }
+                if message.is_one_a() {
+                    println!("  1A ballot: {:?}", &message.ballot());
+                }
+                if message.is_one_b() {
+                    for learner in self.config.learners.keys() {
+                        println!("  1B fresh for {}: {}", learner, message.fresh(learner));
+                    }
+                }
+                if message.is_two_a() {
+                    for learner in self.config.learners.keys() {
+                        println!("  2A for learner {}: {}", learner, message.is_two_a_with_learner(learner));
+                    }
+                }
+
 
                 // echo message to all other participants:
                 for out_channel in &self.out_channels {
