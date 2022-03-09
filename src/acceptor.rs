@@ -94,11 +94,7 @@ impl AcceptorState {
         // Alas, rust's type inference cannot figure out how to type this without help.
         let known_messages : Box<dyn Fn(&Hash256) -> Option<Arc<ParsedMessage>>> = 
             Box::new(move |h| if let Some(x) = self.known_messages.get(h) {Some(x.clone())} else {None});
-        if let Some(x) = ParsedMessage::new(message, hash, &self.config, &known_messages) {
-            Some(Arc::new(x)) 
-        } else {
-            None
-        }
+        ParsedMessage::new(message, hash, &self.config, &known_messages).map(Arc::new)
     }
 
     pub fn hash_received(&self, message : &Hash256) -> bool {
