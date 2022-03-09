@@ -66,7 +66,7 @@ impl LearnerState {
     }
 
     pub fn is_well_formed(&self, message : ConsensusMessage, hash : Hash256) -> Option<Arc<ParsedMessage>> {
-        // create a known_messages lookup function that includes this given message
+        // create a known_messages lookup function using known_messages
         // Alas, rust's type inference cannot figure out how to type this without help.
         let known_messages : Box<dyn Fn(&Hash256) -> Option<Arc<ParsedMessage>>> = 
             Box::new(move |h| self.known_messages.get(h).map(|x| x.clone()));
