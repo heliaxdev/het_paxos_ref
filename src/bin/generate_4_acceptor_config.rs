@@ -11,6 +11,7 @@ use std::{collections::HashMap,
 
 
 /// Generate a basic config file featuring 4 homogeneous acceptors, 1 learner, and a proposal.
+/// First arg will be used as the prefix of the output .json config file names.
 fn main() -> Result<(), Box<dyn Error>>{
     let alice = "Alice".to_string();
     let bob = "Bob".to_string();

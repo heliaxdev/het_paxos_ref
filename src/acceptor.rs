@@ -24,21 +24,43 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 
 /// represents each agent's internal configuration
+/// Take care with concurrent state updates to ensure consistency.
 pub struct AcceptorState {
+    /// The configuration of the Acceptor read from a file at startup. Do not change.
     config : ParsedConfig,
+    /// All messages this Acceptor has ever received, indexed by hash. Should only grow. 
     known_messages : HashMap<Hash256, Arc<ParsedMessage>>,
+    /// Hashes of messages received since this Acceptor last sent a message.
+    /// Grows each time we receive a message.
+    /// Resets to empty when we send a message.
     recent_messages : HashSet<Hash256>,
+    /// Send a ConsensusMessage on these to send it out to another Acceptor or Learner. 
+    /// These should be added whenever an incoming request opens an RPC with this server, or
+    /// whenever our local clients open an RPC with another server (which we will try to do with
+    /// all acceptors at startup). 
     out_channels : Vec<UnboundedSender<ConsensusMessage>>,
 }
 
 impl AcceptorState { 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    /// CALLED ONLY WHEN ALL REFERENCES IN THE DELIVERED MESSAGE HAVE ALREADY BEEN RECEIVED
+    /// This is the core consensus algorithm step. 
+    /// Deliver a ConsensusMessage (received from a Proposer or Acceptor via gRPC).
+    /// This will check if the message has already been received, and is well-formed, and then:
+    /// - print some debug info
+    /// - echo the message along all outgoing channels
+    /// - add the message to self.known_messages
+    /// - add the message to self.recent_messagse
+    /// - make a new outgoing message (referencing self.recent_messages), and if that is
+    ///     well-formed, deliver it as well (recurse)
     pub fn deliver_message(&mut self, message : ConsensusMessage) {
         let message_hash = hash(&message);
         // if we have not received this message before:
         if !self.hash_received(&message_hash) {
+            // if this message is well-formed:
             if let Some(message) = self.is_well_formed(message, message_hash.clone()) {
 
+                // print some debug information
                 println!("forwarding message {}", &message_hash);
                 if let Some(address) = message.signer() {
                     println!("  from: {}", &address.name);
@@ -63,10 +85,15 @@ impl AcceptorState {
                     out_channel.send(message.original().clone())
                       .unwrap_or_else(|_| eprintln!("error while sending message to an out_channel"));
                 }
+
+                // add message to known_messages and recent_messages
                 self.known_messages.insert(message_hash.clone(), message);
                 self.recent_messages.insert(message_hash);
                 // Optimization opportunity (not implemented here):
                 // We could remove anything in message.transitive_references() from recent_messages.
+                
+                // make a new outgoing message (referencing self.recent_messages), and if that is
+                //  well-formed, deliver it as well (recurse)
                 let next_message_hash_set = grpc::HashSet{hashes : self.recent_messages.iter().cloned().collect()};
                 let next_message = ConsensusMessage{message_oneof : Some(
                     MessageOneof::SignedHashSet(SignedHashSet{
@@ -91,6 +118,12 @@ impl AcceptorState {
         }
     }
 
+    /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    /// Determine if this message is well-formed using the ParsedMessage::new constructor.
+    /// Returns None if the message is not well-formed.
+    /// Returns Some(Arc(ParsedMessage)) if it is well-formed.
+    /// This uses self.known_messages to look up messages corresponding to the reference hashes in
+    ///   message.
     pub fn is_well_formed(&self, message : ConsensusMessage, hash : Hash256) -> Option<Arc<ParsedMessage>> {
         // create a known_messages lookup function using known_messages
         // Alas, rust's type inference cannot figure out how to type this without help.
@@ -99,10 +132,16 @@ impl AcceptorState {
         ParsedMessage::new(message, hash, &self.config, &known_messages).map(Arc::new)
     }
 
+    /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    /// Have we received a message with this hash before?
+    /// Uses self.known_messages.
     pub fn hash_received(&self, message : &Hash256) -> bool {
         self.known_messages.get(message).is_some()
     }
 
+    /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    /// Have all references in message already been received?
+    /// Uses self.known_messages.
     pub fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
        if let Some(MessageOneof::SignedHashSet(SignedHashSet{hash_set : Some(hashset),..})) =
                &message.message_oneof {
@@ -112,6 +151,7 @@ impl AcceptorState {
     }
 }
 
+/// A mutex locking an AcceptorState
 struct AcceptorMutex {
     mutex : Mutex<AcceptorState>,
     condvar : Condvar,
@@ -119,10 +159,19 @@ struct AcceptorMutex {
 
 
 /// public struct representing an acceptor: completely opaque.
+/// Construct using new_acceptor.
+/// Clones are Arcs referencing the same AcceptorMutex, so you can clone it, but it's the same
+///   mutex and state inside.
 pub struct Acceptor(Arc<AcceptorMutex>);
 
 
 impl AcceptorMutex {
+    /// Called whenever a ConsensusMessage comes in over the wire. 
+    /// - waits until the message's timestamp is in the past (by local clock).
+    /// - waits until message's references have already been delivered (this involves grabbing the
+    /// relevant mutex, checking, and releasing it)
+    /// - Grabs the mutex and calls AcceptorState::deliver_message.
+    /// - Releases the mutex and notifies anyone who is waiting for more messages to be delivered.
     fn receive_message(&self, message : ConsensusMessage) {
         // If it's a ballot, wait until the timetamp has passed
         if let Some(MessageOneof::Ballot(Ballot{timestamp : Some(timestamp), ..})) =
@@ -142,6 +191,12 @@ impl AcceptorMutex {
         self.condvar.notify_all();
     }
 
+    /// Adds a new outgoing channel that will receive copies all the messages this Acceptor has *ever*
+    /// received. 
+    /// Note that this means it immediately receives all the messages this Acceptor has already
+    /// received, and then receives a new message with every call to AcceptorState::deliver_message.
+    /// This is called whenever we establish a new connection (of either direction) to anyone else. 
+    /// This does involve temporarily grabbing the AcceptorMutex. 
     fn add_out_channel(&self) -> UnboundedReceiver<ConsensusMessage> {
         // create a thing that will send response messages
         let (sender, receiver) = unbounded_channel();
@@ -159,6 +214,7 @@ impl AcceptorMutex {
 }
 
 /// public way to generate a new acceptor (it has received no messages) using a config file.
+/// This does not launch a server. It just creates a new acceptor object. 
 pub fn new_acceptor(config : ParsedConfig) -> Acceptor {
     Acceptor(Arc::new(AcceptorMutex{
                mutex : Mutex::new(AcceptorState {
@@ -171,6 +227,9 @@ pub fn new_acceptor(config : ParsedConfig) -> Acceptor {
              }))
 }
 
+/// Launches an Acceptor server using a ParsedConfig.
+/// This calls new_acceptor. 
+/// This then interacts with gRPC generated code to start up the server. 
 pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::error::Error>> {
     let known_addresses = config.known_addresses.clone();
     let port = config.address.port.clone();
@@ -209,7 +268,7 @@ pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::e
 }
 
 /// What follows is an ugly hack that exists only so I can have UnboundedReceiverStreams send Ts to
-/// people who want Result<T,Status>s.
+/// things that want Result<T,Status>s.
 /// I really wish I could make this generic over the second type parameter of Result instead of
 /// just Status.
 pub struct UnboundedReceiverWrapper<T>(UnboundedReceiverStream<T>);
@@ -225,7 +284,9 @@ impl<T> Stream for UnboundedReceiverWrapper<T> {
     }
 }
 
-/// Implements the gRPC requirements for a LiarsLie Server
+/// Implements the gRPC requirements for an Acceptor Server
+/// Each stream_consensus_message message receipt calls receive_message, and all messages sent by
+/// deliver_message will be sent back along the return connection. 
 #[tonic::async_trait]
 impl acceptor_server::Acceptor for Acceptor {
     /// streams messages to and/or from everyone else
