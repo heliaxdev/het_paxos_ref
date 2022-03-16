@@ -37,6 +37,7 @@ pub struct PublicKey {
 }
 
 impl fmt::Display for PublicKey {
+    /// Public Keys print out as their PEM formatted String.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.string)
     }
@@ -87,6 +88,12 @@ impl PrivateKey {
 }
 
 impl PublicKey {
+    /// private method.
+    /// Used to create a public key.
+    /// This method will internally create a closure that is stored in the `PublicKey` object.
+    /// That closure is called to verify signatures. 
+    /// The closure is constructed using `verify_tls13_signature`. 
+    /// It implicitly stores an object (opaque type) created with `AllowAnyAuthenticatedClient::new`.
     fn new_create_closure(pem_string : String, scheme : SignatureScheme, certificate : Certificate)
             -> PublicKey {
         let a = AllowAnyAuthenticatedClient::new(root_cert_store(&certificate));
@@ -138,50 +145,61 @@ impl PublicKey {
 }
 
 impl Hash for PublicKey {
+    /// We hash a `PublicKey` by hashing its `string` representation.
     fn hash<H: Hasher>(&self, state : &mut H) {
         self.string.hash(state)
     }
 }
 
 impl PartialEq for PublicKey {
+    /// `PublicKey`s are equal if their `string` representations are equal.
     fn eq(&self, other : &Self) -> bool {
         self.string == other.string
     }
 }
 
+/// Given `PartialEq` is implemented, `Eq` is also implemented.
 impl Eq for PublicKey {}
 
 
 impl Ord for PublicKey {
+    /// We order `PublicKey`s using the ordering on their `string` representations.
     fn cmp(&self, other : &Self) -> Ordering {
         self.string.cmp(&other.string)
     }
 }
 
 impl PartialOrd for PublicKey {
+    /// We order `PublicKey`s using the ordering on their `string` representations.
+    /// This directly uses the ordering from the `Ord` impl.
     fn partial_cmp(&self, other : &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Debug for PublicKey {
+    /// We print out `PublicKey`s using their `string` (PEM-formetted) representation.
     fn fmt(&self, f : &mut Formatter<'_>) -> Result<(), Error> {
         self.string.fmt(f)
     }
 }
 
+/// Create a new `Certificate` given a PEM-formatted public key string.
+/// Will panic and print out a line if it fails to parse. 
 fn certificate(public_key_string : &String) -> Certificate {
     Certificate( certs(&mut (public_key_string.as_bytes())).expect(
                         &format!("could not parse certs from {}", &public_key_string)).pop()
         .expect(&format!("0 certs parsed from {}", &public_key_string)))
 }
 
+/// Create a `RootCertStore` featuring one `Certificate` as the only trusted root.
 fn root_cert_store(certificate : &Certificate) -> RootCertStore {
     let mut root_cert_store = RootCertStore::empty();
     root_cert_store.add(certificate).unwrap();
     root_cert_store
 }
 
+/// Which `SignatureScheme`s does this `Certificate` support?
 fn supported_verify_schemes(certificate : &Certificate) -> Vec<SignatureScheme> {
     AllowAnyAuthenticatedClient::new(root_cert_store(certificate))
         .supported_verify_schemes()

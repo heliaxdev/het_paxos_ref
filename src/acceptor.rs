@@ -152,6 +152,8 @@ impl AcceptorState {
 }
 
 /// A mutex locking an AcceptorState
+/// The idea is that we'll use one big lock to totally serialize all
+///  the interesting operations (which mostly means `deliver_message`).
 struct AcceptorMutex {
     mutex : Mutex<AcceptorState>,
     condvar : Condvar,
