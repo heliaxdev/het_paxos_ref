@@ -9,10 +9,6 @@ use std::{collections::{HashMap, HashSet},
           sync::Arc,
 };
 
-// We're going to end up copying ParsedAddress objects A LOT.
-// I'd like to use something more clever.
-// Maybe some kind of pointer that lasts as long as the Config exists.
-// Not even sure how to do that...
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ParsedAddress {
@@ -33,7 +29,7 @@ impl ParsedAddress {
 }
 
 pub struct ParsedConfig {
-    pub known_addresses : Vec<Arc<ParsedAddress>>, // do we need this?
+    pub known_addresses : Vec<Arc<ParsedAddress>>,
     pub proposal : Option<String>,
     pub private_key : PrivateKey,
     pub address : Arc<ParsedAddress>,

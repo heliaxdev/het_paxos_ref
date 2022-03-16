@@ -25,6 +25,8 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 
 /// represents each agent's internal configuration
 /// Take care with concurrent state updates to ensure consistency.
+/// Normally, we handle this by keeping one big lock, and only doing
+///  state updated when we have the lock.
 pub struct AcceptorState {
     /// The configuration of the Acceptor read from a file at startup. Do not change.
     config : ParsedConfig,
@@ -216,7 +218,8 @@ impl AcceptorMutex {
 }
 
 /// public way to generate a new acceptor (it has received no messages) using a config file.
-/// This does not launch a server. It just creates a new acceptor object. 
+/// This does not launch a server.
+/// It just creates a new acceptor object. 
 pub fn new_acceptor(config : ParsedConfig) -> Acceptor {
     Acceptor(Arc::new(AcceptorMutex{
                mutex : Mutex::new(AcceptorState {
@@ -230,7 +233,7 @@ pub fn new_acceptor(config : ParsedConfig) -> Acceptor {
 }
 
 /// Launches an Acceptor server using a ParsedConfig.
-/// This calls new_acceptor. 
+/// This calls `new_acceptor`. 
 /// This then interacts with gRPC generated code to start up the server. 
 pub async fn launch_acceptor(config : ParsedConfig) -> Result<(), Box<dyn std::error::Error>> {
     let known_addresses = config.known_addresses.clone();

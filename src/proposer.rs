@@ -12,6 +12,13 @@ use tokio::{self, sync::mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::Request;
 
+/// A very simple proposer for Heterogeneous Paxos.
+/// Connects to all the `Acceptors`, and then repeatedly proposes the
+///  same value (with randomized exponential delays) forever.
+/// Launch this _after_ all `Acceptor`s are launched, so it can
+///  connect to them over gRPC.
+/// Value proposed is taken from `config`.
+/// (Well, it will be the hash of the value in `config`, but whatever).
 pub async fn launch_proposer(config : ParsedConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(proposal) = config.proposal {
         let value_hash = hash(&proposal);
@@ -33,11 +40,12 @@ pub async fn launch_proposer(config : ParsedConfig) -> Result<(), Box<dyn std::e
             }))
         }).collect::<Vec<_>>();
 
+        // repeated proposals with exponential random timing
         for exponent in 0.. {
             sleep(Duration::new(thread_rng().gen_range(0..(2_u64.pow(exponent))), 0));
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
             let message = ConsensusMessage{message_oneof : Some(MessageOneof::Ballot(
-                Ballot{timestamp : Some(Timestamp{
+                Ballot{timestamp : Some(Timestamp{ // ballots use the current time by local clock
                     seconds : now.as_secs() as i64,
                     nanos : now.subsec_nanos() as i32 }),
                   value_hash : Some(value_hash.clone())}))};
@@ -48,7 +56,9 @@ pub async fn launch_proposer(config : ParsedConfig) -> Result<(), Box<dyn std::e
                 sender.send(message.clone())?;
             }
         }
-        // nothing after this point should matter
+        // nothing after this point should matter, because we should never get out of that loop.
+        // However, imagining we somehow finished proposing, time to clean up all the connection
+        // threads we made earlier. 
         for (_, await_me) in senders_and_threads.into_iter() {
             await_me.await?;
         }
