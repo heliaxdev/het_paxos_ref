@@ -36,6 +36,7 @@ pub struct LearnerState {
 
 impl LearnerState { 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    ///
     /// This is the core Learner behaviour. 
     /// Deliver a ConsensusMessage (received from an Acceptor via gRPC).
     /// This will check if the message has already been received, and is well-formed, and then:
@@ -88,6 +89,7 @@ impl LearnerState {
     }
 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    ///
     /// Determine if this message is well-formed using the ParsedMessage::new constructor.
     /// Returns None if the message is not well-formed.
     /// Returns Some(Arc(ParsedMessage)) if it is well-formed.
@@ -102,6 +104,7 @@ impl LearnerState {
     }
 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    ///
     /// Have we received a message with this hash before?
     /// Uses self.known_messages.
     pub fn hash_received(&self, message : &Hash256) -> bool {
@@ -109,6 +112,7 @@ impl LearnerState {
     }
 
     /// CALLED ONLY WHEN YOU HAVE THE RELEVANT MUTEX
+    ///
     /// Have all references in message already been received?
     /// Uses self.known_messages.
     pub fn predecessors_received(&self, message : &ConsensusMessage) -> bool {
