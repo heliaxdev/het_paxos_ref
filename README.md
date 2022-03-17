@@ -87,5 +87,40 @@ Currently, processes are set to print out debug information displaying all messa
 Kill all Acceptor, Learner, and Proposer processes. 
 There is no state saved outside of in-process memory.
 
+## Code Layout
+The basic consensus design is intended to mirror [the Technical Report](https://arxiv.org/abs/2011.08253).
+The `atomic` block from `acceptor_on_receipt` in Figure 3 of [the Technical Report](https://arxiv.org/abs/2011.08253) is implemented fairly directly as `AcceptorState::deliver_message`.
+However, several of the properties of consensus messages (e.g. which Acceptors are caught) are pre-computed in `src/parsed_message.rs`, as re-computing them every time can create exponential runtimes. 
 
+In order to ensure Acceptors and Learners process messages atomically, each has a single [mutex](https://en.wikipedia.org/wiki/Mutual_exclusion#Types_of_mutual_exclusion_devices) which must be locked while processing a message. 
+This ensures messages are processed serially.
+It is not, however, very efficient, or strictly necessary. 
+
+### [Tonic](https://docs.rs/tonic/latest/tonic/) [gRPC](https://grpc.io/) Stuff
+Acceptors implement servers specified in `proto/hetpaxosref.proto`.
+Specifically, they accept [gRPC](https://grpc.io/) connections allowing infinite streams of `ConsensusMessage`s in both directions. 
+Technically, the behaviour for what they do when initiating such a [gRPC](https://grpc.io/) call is specified under `impl acceptor_server::Acceptor for Acceptor` in `src/acceptor.rs`. 
+In practice, we process each incoming message (both from an incoming  [gRPC](https://grpc.io/) call and as a response to an outgoing [gRPC](https://grpc.io/) call) separately and concurrently, using `AcceptorMutex::receive_message` in `src/acceptor.rs`.
+Learners are similarly designed to process each incoming message separately and concurrently, using `LearnerMutex::receive_message` in `src/learner.rs`.
+There is non-trivial code re-use between Learners and Acceptors, but leaving them separate makes the implementation of each easier to understand in isolation.
+
+At startup, Acceptors, Learners, and Proposers all try to establish ongoing [gRPC](https://grpc.io/) calls with all Acceptors.
+This ensures that, regardless of startup order, all pairs of Acceptors should be able to establish a successful [gRPC](https://grpc.io/) call in at least one direction. 
+
+## Messages
+We try to pre-compute many of the functions from [the Technical Report](https://arxiv.org/abs/2011.08253) when we receive a message (re-computing them every time we need them can cause exponential runtimes). 
+We do this by constructing a `ParsedMessage` from a `ConsensusMessage` using `ParsedMessage::new` (which returns `None` if the `ConsensusMessage` is not _well-formed_).
+For this reason, `ParsedMessage::new` contains much of the "meat" of the implementation.
+
+Unlike [the Technical Report](https://arxiv.org/abs/2011.08253), our _2A_ messages do not specify a Learner. 
+Instead, we encode 2A and 1B messages simply as a signed set of references (hashes), and determine at parsing time if they form a valid 1B or 2A. 
+In this way, a single `ConsensusMessage` can represent multiple _2A_ messages, for different Learners. 
+
+## Ballot Numbers
+As per [the Technical Report](https://arxiv.org/abs/2011.08253), Ballot numbers must be unique to the value proposed.
+Since termination can require a higher ballot number than previously used, it helps if they increase with time. 
+Our Ballot numbers are therefore pairs: a [Timestamp](https://developers.google.com/protocol-buffers/docs/reference/google.protobuf#timestamp), and a hash of the proposed value.
+Acceptors delay delivery of any _1A_ until their local clock has passed the _1A_'s Timestamp (this is implemented in `AcceptorMutex::receive_message`).
+If all clocks are synchronized, then in some sense, the "best" a Proposer can do is to use the current time in its Ballots.
+Even when all clocks are not synchronized, all _1A_s sent will _eventually_ be received. 
 
