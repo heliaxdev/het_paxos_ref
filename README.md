@@ -7,6 +7,7 @@ Network message contents are kept to a bare minimum.
 It is written as purely as possible in [Rust](https://www.rust-lang.org/), using [rustls](https://docs.rs/rustls/latest/rustls/) for cryptographic signatures, and the [tonic](https://docs.rs/tonic/latest/tonic/) [gRPC](https://grpc.io/) library for network communication.
 
 ## What This Is Not
+- This is _not_ the implementation used in the [the OPODIS 2020 paper](https://drops.dagstuhl.de/opus/volltexte/2021/13490/) paper or [the Technical Report](https://arxiv.org/abs/2011.08253).
 - This implementation is _not_ optimized for performance or efficiency.
   It should not be used for any industrial purpose. 
   Several comments throughout the code point out places where optimizations should be possible.
