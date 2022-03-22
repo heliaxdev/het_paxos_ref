@@ -1,7 +1,7 @@
-# [Heterogeneous Paxos](https://arxiv.org/abs/2011.08253) Reference [Rust](https://www.rust-lang.org/) Implementation
+# [Heterogeneous Paxos](https://arxiv.org/abs/2011.08253) [Rust](https://www.rust-lang.org/) Implementation
 
 ## What This Is
-This is intended to be a [reference implementation](https://en.wikipedia.org/wiki/Reference_implementation) for [Heterogeneous Paxos](https://arxiv.org/abs/2011.08253) ([OPODIS 2020](https://drops.dagstuhl.de/opus/volltexte/2021/13490/)), written in [Rust](https://www.rust-lang.org/).
+This is based on the [reference implementation](https://github.com/isheff/het_paxos_ref) for [Heterogeneous Paxos](https://arxiv.org/abs/2011.08253) ([OPODIS 2020](https://drops.dagstuhl.de/opus/volltexte/2021/13490/)), written in [Rust](https://www.rust-lang.org/).
 While it is not the implementation used in the original publication or [the Technical Report](https://arxiv.org/abs/2011.08253), it is intended to provide a clean and correct implementation of Heterogeneous Paxos as specified in [the Technical Report](https://arxiv.org/abs/2011.08253), and is written by the same author, [Isaac Sheff](https://IsaacSheff.com).
 Network message contents are kept to a bare minimum.
 It is written as purely as possible in [Rust](https://www.rust-lang.org/), using [rustls](https://docs.rs/rustls/latest/rustls/) for cryptographic signatures, and the [tonic](https://docs.rs/tonic/latest/tonic/) [gRPC](https://grpc.io/) library for network communication.
