@@ -108,15 +108,17 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
         addresses_by_name.get(name).expect(&format!("name {} not found in addresses", name)).clone();
     let get_learner = |name : &String|
         learners_by_name.get(name).expect(&format!("name {} not found in learners", name)).clone();
-    let fill_quorums = |mqs : &MinimalQuorums|  mqs.quorums.iter().map(
-        |q| q.names.iter().map(get_address).collect()).collect();
-    let learners = grpc_learners.iter().map(
-        |(learner_name, mqs)| (get_learner(learner_name), fill_quorums(mqs))).collect();
+    let fill_quorums = |mqs : MinimalQuorums|  mqs.quorums.into_iter().map(
+        |q| q.names.iter().map(get_address).collect());
+    let learners = grpc_learners.into_iter().map(
+        |(learner_name, mqs)| (get_learner(&learner_name), fill_quorums(mqs).collect())).collect();
     let ordered = | a : Arc<String>, b : Arc<String> | if a<b { (a,b) } else { (b,a) };
-    let safety_sets = grpc_safety_sets.iter().map(|(learner_name_0, edges)|
-        edges.safety_sets.iter().map(|(learner_name_1, mqs)|
-          (ordered(get_learner(learner_name_0), get_learner(learner_name_1)), fill_quorums(mqs)))
-        ).flatten().collect();
+    let mut safety_sets = HashMap::new();
+    // insert elements into safety_sets, concatenating vecs of safety sets if there are duplicates
+    grpc_safety_sets.into_iter().for_each(|(learner_name_0, edges)|
+      edges.safety_sets.into_iter().for_each(|(learner_name_1, mqs)| 
+        safety_sets.entry(ordered(get_learner(&learner_name_0), get_learner(&learner_name_1)))
+                   .or_insert(Vec::new()).extend(fill_quorums(mqs))));
     let proposal = if proposal_string.len() > 0 {Some(proposal_string)} else {None};
     Ok(ParsedConfig{
         known_addresses,
@@ -127,3 +129,4 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
         safety_sets,
        })
 }
+
