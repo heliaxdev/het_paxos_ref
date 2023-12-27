@@ -323,26 +323,16 @@ impl ParsedMessage {
 
         /// Is this pair of learners connected?
         /// Specifically, given this set of `caught` Acceptors, does
-        ///  this pair of learners have an uncaught acceptor in each
-        ///  of their quorum intersections?
+        ///  does any of their safety sets have no interection with caught?
         fn connected_learners(config : &ParsedConfig,
                               learner_x : &Arc<String>,
                               learner_y : &Arc<String>,
                               caught : &HashSet<Arc<ParsedAddress>>)
                               -> bool {
-            if let (Some(quorums_x), Some(quorums_y)) =
-                   (config.learners.get(learner_x), config.learners.get(learner_y)) {
-                for quorum_x in quorums_x {
-                    for quorum_y in quorums_y {
-                        if caught.is_superset(&quorum_x.intersection(quorum_y).map(|x| x.clone()).collect()) {
-                            return false;
-                        }
-                    }
-                }
-                return (quorums_x.len() > 0) && (quorums_y.len() > 0);
-            }
-            false
-        }
+          let k = if learner_x<learner_y {(learner_x.clone(),learner_y.clone())}
+                                    else {(learner_y.clone(),learner_x.clone())};
+          config.safety_sets.get(&k).map_or(false, |s| s.iter().any(|x| caught.intersection(x).count() == 0))
+         }
 
         /// To which other Learners is `learner` connected, given that
         ///  `caught` Accetpors are Byzantine?

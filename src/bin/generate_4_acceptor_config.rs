@@ -1,7 +1,8 @@
 use het_paxos_ref::{config::{Address,
                              Config,
                              Quorum,
-                             MinimalQuorums},
+                             MinimalQuorums,
+                             SafetyEdges},
                     crypto::new_key_pair};
 use serde_json::to_writer_pretty;
 use std::{collections::HashMap,
@@ -44,6 +45,17 @@ fn main() -> Result<(), Box<dyn Error>>{
                         Quorum{names : vec![alice.clone(), carol.clone(), dave.clone()]},
                         Quorum{names : vec![bob.clone(), carol.clone(), dave.clone()]},
                     ]}),
+                ]),
+                safety_sets : HashMap::from([
+                  (eve.clone(),
+                    SafetyEdges{safety_sets : HashMap::from([
+                      (eve.clone(), MinimalQuorums{quorums : vec![
+                        Quorum{names : vec![alice.clone(), bob.clone(), carol.clone()]},
+                        Quorum{names : vec![alice.clone(), bob.clone(), dave.clone()]},
+                        Quorum{names : vec![alice.clone(), carol.clone(), dave.clone()]},
+                        Quorum{names : vec![bob.clone(), carol.clone(), dave.clone()]},
+                        ]})
+                    ])})
                 ]),
                 addresses : addresses.iter().map(|(_,a)| a.clone()).collect()
             })?;
