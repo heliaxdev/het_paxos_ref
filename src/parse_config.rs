@@ -1,4 +1,4 @@
-use crate::{config::{Address, Config},
+use crate::{config::{Address, Config, MinimalQuorums},
             crypto::{PublicKey, PrivateKey},
             grpc::{ConsensusMessage,
                    consensus_message::MessageOneof,
@@ -67,6 +67,11 @@ pub struct ParsedConfig {
     /// Learners are identified by `String`s from the Config file.
     /// Quorums are represented as HashSets of `ParsedAddress`s.
     pub learners : HashMap<Arc<String>, Vec<HashSet<Arc<ParsedAddress>>>>,
+    /// Describes the safety sets of each (unordered) pair of learners.
+    /// Learner pairs are identified by (lexicographically ordered)
+    ///  pairs of `String`s from the Config file.
+    /// (Minimal) Safety Sets are represented as HashSets of `ParsedAddress`s.
+    pub safety_sets : HashMap<(Arc<String>,Arc<String>) , Vec<HashSet<Arc<ParsedAddress>>>>,
 }
 
 
@@ -78,7 +83,8 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
     let Config { private_key : private_key_string,
                  proposal : proposal_string,
                  learners : grpc_learners,
-                 addresses : grpc_addresses } = serde_json::from_str(s)?;
+                 addresses : grpc_addresses,
+                 safety_sets : grpc_safety_sets } = serde_json::from_str(s)?;
     let known_addresses : Vec<Arc<ParsedAddress>> = grpc_addresses.into_iter().map(
         |Address{name, hostname, port, public_key}| 
             Arc::new(ParsedAddress {
@@ -89,6 +95,8 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
             })).collect();
     let addresses_by_name : HashMap<String, Arc<ParsedAddress>> = known_addresses.iter().map(
         |address| (address.name.clone(), address.clone())).collect();
+    let learners_by_name : HashMap<String, Arc<String>> = grpc_learners.iter().map(
+        |(name, _)| (name.clone(), Arc::new(name.clone())) ).collect();
     let private_key = PrivateKey::new_default_scheme(private_key_string);
     // Optimization Opportunity:
     // there has got to be a better way to identify which `PublicKey` matches this `PrivateKey`.
@@ -98,10 +106,17 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
         ).expect("my private key did not match any known public key").clone();
     let get_address = |name : &String|
         addresses_by_name.get(name).expect(&format!("name {} not found in addresses", name)).clone();
+    let get_learner = |name : &String|
+        learners_by_name.get(name).expect(&format!("name {} not found in learners", name)).clone();
+    let fill_quorums = |mqs : &MinimalQuorums|  mqs.quorums.iter().map(
+        |q| q.names.iter().map(get_address).collect()).collect();
     let learners = grpc_learners.iter().map(
-        |(learner_name, mqs)|
-          (Arc::new(learner_name.to_string()),
-           mqs.quorums.iter().map(|q| q.names.iter().map(get_address).collect()).collect())).collect();
+        |(learner_name, mqs)| (get_learner(learner_name), fill_quorums(mqs))).collect();
+    let ordered = | a : Arc<String>, b : Arc<String> | if a<b { (a,b) } else { (b,a) };
+    let safety_sets = grpc_safety_sets.iter().map(|(learner_name_0, edges)|
+        edges.safety_sets.iter().map(|(learner_name_1, mqs)|
+          (ordered(get_learner(learner_name_0), get_learner(learner_name_1)), fill_quorums(mqs)))
+        ).flatten().collect();
     let proposal = if proposal_string.len() > 0 {Some(proposal_string)} else {None};
     Ok(ParsedConfig{
         known_addresses,
@@ -109,6 +124,6 @@ pub fn from_json(s: &str) -> serde_json::error::Result<ParsedConfig> {
         private_key,
         address,
         learners,
+        safety_sets,
        })
 }
-

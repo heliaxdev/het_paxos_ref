@@ -21,11 +21,18 @@ message MinimalQuorums {
   repeated Quorum quorums = 1;
 }
 
+// Minimal Safety Sets for edges associated with one learner 
+message SafetyEdges {
+  map<string, MinimalQuorums> safetySets = 1;
+}
+
+
 // configures our node to participate in consensus.
 // Note that specifying our privateKey implicitly defines our role, etc.
 message Config {
   string privateKey = 1;
   string proposal = 2;
   map<string, MinimalQuorums> learners = 3;
-  repeated Address addresses = 4;
+  map<string, SafetyEdges> safetySets = 4;
+  repeated Address addresses = 5;
 }
